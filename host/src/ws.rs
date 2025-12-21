@@ -64,7 +64,10 @@ augroup END
     // Pass channel sender so backend can send FS requests to WS
     let browser_backend = Box::new(BrowserFsBackend::new("default", to_ws_tx.clone()));
     vfs_manager.register_backend("browser", browser_backend);
-    eprintln!("VFS backends registered: local, browser");
+    
+    // Note: SSH backend (vfs://ssh/...) is created dynamically on-demand
+    // because it requires connection info in the URI. See VfsManager::read_file/write_file
+    eprintln!("VFS backends registered: local, browser (ssh on-demand)");
     
     // Thread 1: Read from Neovim stdout, forward redraw events to WebSocket
     let mut nvim_stdout = unsafe { 

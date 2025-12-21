@@ -50,6 +50,13 @@ impl VfsManager {
     pub fn read_file(&self, vfs_path: &str) -> Result<Vec<u8>> {
         let (backend_name, path) = self.parse_vfs_path(vfs_path)?;
         
+        // SSH backend is created dynamically because connection info is in URI
+        if backend_name == "ssh" {
+            use super::SshFsBackend;
+            let backend = SshFsBackend::connect(vfs_path)?;
+            return backend.read(&path);
+        }
+        
         let backend = self.backends.get(&backend_name)
             .with_context(|| format!("Unknown VFS backend: {}", backend_name))?;
         
@@ -59,6 +66,13 @@ impl VfsManager {
     /// Write file via VFS backend
     pub fn write_file(&self, vfs_path: &str, data: &[u8]) -> Result<()> {
         let (backend_name, path) = self.parse_vfs_path(vfs_path)?;
+        
+        // SSH backend is created dynamically because connection info is in URI
+        if backend_name == "ssh" {
+            use super::SshFsBackend;
+            let backend = SshFsBackend::connect(vfs_path)?;
+            return backend.write(&path, data);
+        }
         
         let backend = self.backends.get(&backend_name)
             .with_context(|| format!("Unknown VFS backend: {}", backend_name))?;
