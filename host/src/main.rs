@@ -7,12 +7,14 @@ mod vfs;
 mod vfs_handlers;
 
 fn main() -> anyhow::Result<()> {
+    println!("Starting nvim-web host...");
+    
+    // Set up Neovim
     let mut nvim = nvim::Nvim::spawn()?;
     
-    // Initialize VFS manager with LocalFs backend
-    let mut vfs_manager = vfs::VfsManager::new();
-    vfs_manager.register_backend("local", Box::new(vfs::LocalFs::new("/")));
+    // Start WebSocket server and bridge
+    // VfsManager is now created inside bridge() function
+    ws::serve(&mut nvim)?;
     
-    ws::serve(&mut nvim, vfs_manager)?;
     Ok(())
 }

@@ -7,9 +7,9 @@ use anyhow::Result;
 use rmpv::Value;
 
 use crate::nvim::Nvim;
-use crate::vfs::VfsManager;
+use crate::vfs::{VfsManager, LocalFs, BrowserFsBackend};
 
-pub fn serve(nvim: &mut Nvim, mut vfs_manager: VfsManager) -> Result<()> {
+pub fn serve(nvim: &mut Nvim) -> Result<()> {
     let server = TcpListener::bind("0.0.0.0:9001")?;
     println!("WebSocket server listening on ws://0.0.0.0:9001");
 
@@ -18,12 +18,12 @@ pub fn serve(nvim: &mut Nvim, mut vfs_manager: VfsManager) -> Result<()> {
 
     let mut websocket = accept(stream)?;
     
-    bridge(nvim, &mut websocket, &mut vfs_manager)?;
+    bridge(nvim, &mut websocket)?;
     
     Ok(())
 }
 
-fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>, vfs_manager: &mut VfsManager) -> Result<()> {
+fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
     // Send initial UI attach
     crate::rpc::attach_ui(&mut nvim.stdin)?;
     
@@ -49,9 +49,22 @@ augroup END
     )?;
     eprintln!("VFS autocmd registered successfully");
     
+    // Initialize VFS Manager with backends
+    let mut vfs_manager = VfsManager::new();
+    
+    // Register LocalFs backend for vfs://local/...
+    let local_backend = Box::new(LocalFs::new("/tmp/nvim-web"));
+    vfs_manager.register_backend("local", local_backend);
+    
     // Create channels for thread communication
     let (to_ws_tx, to_ws_rx) = mpsc::channel::<Vec<u8>>();
     let (to_nvim_tx, to_nvim_rx) = mpsc::channel::<Vec<u8>>();
+    
+    // Register BrowserFs backend for vfs://browser/...
+    // Pass channel sender so backend can send FS requests to WS
+    let browser_backend = Box::new(BrowserFsBackend::new("default", to_ws_tx.clone()));
+    vfs_manager.register_backend("browser", browser_backend);
+    eprintln!("VFS backends registered: local, browser");
     
     // Thread 1: Read from Neovim stdout, forward redraw events to WebSocket
     let mut nvim_stdout = unsafe { 
@@ -126,11 +139,26 @@ augroup END
             }
         }
         
-        // Forward WebSocket messages to Neovim
+        // Forward WebSocket messages to Neovim/VFS
         if let Ok(data) = to_nvim_rx.try_recv() {
             let mut cursor = std::io::Cursor::new(data);
             if let Ok(value) = rmpv::decode::read_value(&mut cursor) {
-                if handle_browser_message(&value, &mut nvim.stdin, vfs_manager).is_err() {
+                // Check if this is an FS response (type 3)
+                if let Value::Array(ref arr) = value {
+                    if !arr.is_empty() {
+                        if let Value::Integer(msg_type) = &arr[0] {
+                            if msg_type.as_u64() == Some(3) {
+                                // FS response from browser - route to rpc_sync
+                                if let Err(e) = crate::rpc_sync::handle_fs_response(&value) {
+                                    eprintln!("Error handling FS response: {}", e);
+                                }
+                                continue; // Don't process as browser message
+                            }
+                        }
+                    }
+                }
+                
+                if handle_browser_message(&value, &mut nvim.stdin, &mut vfs_manager).is_err() {
                     break;
                 }
             }
