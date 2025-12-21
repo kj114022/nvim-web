@@ -1,19 +1,18 @@
-use anyhow::{Result, bail, Context};
+use anyhow::{Result, bail};
 use super::{VfsBackend, FileStat};
 use rmpv::Value;
-use std::sync::{Arc, Mutex, Condvar};
-use std::collections::HashMap;
+use std::sync::mpsc::Sender;
 
 /// Browser-based VFS backend using OPFS (Origin Private File System)
 /// 
 /// This backend delegates storage to the browser's OPFS via WebSocket RPC.
 /// The host owns VFS semantics; the browser owns storage.
 /// 
-/// Protocol: request/response with ID-based routing (similar to rpc_sync pattern)
+/// Communication: Uses channel-based message passing to WS thread.
+/// This matches the existing Neovim RPC pattern and avoids trait object issues.
 pub struct BrowserFsBackend {
     pub namespace: String,
-    // TODO: WebSocket handle will be added when wiring into ws.rs
-    // For now, this is a placeholder that will error
+    ws_tx: Sender<Vec<u8>>,  // Channel to WS writer thread
 }
 
 impl BrowserFsBackend {
@@ -21,18 +20,45 @@ impl BrowserFsBackend {
     /// 
     /// Namespace separates different projects/contexts in OPFS.
     /// Example: "default", "demo", "project-name"
-    pub fn new(namespace: impl Into<String>) -> Self {
+    pub fn new(namespace: impl Into<String>, ws_tx: Sender<Vec<u8>>) -> Self {
         Self {
             namespace: namespace.into(),
+            ws_tx,
         }
     }
     
     /// Make a blocking FS call via WebSocket
     /// 
-    /// This will be implemented to use the same condvar pattern as rpc_sync
-    /// when WebSocket integration is complete.
-    fn fs_call(&self, _op_type: &str, _path: &str, _data: Option<&[u8]>) -> Result<Value> {
-        bail!("WebSocket integration not complete - BrowserFsBackend requires ws handle");
+    /// Sends message through channel, waits for response via rpc_sync registry.
+    fn fs_call(&self, op_type: &str, path: &str, data: Option<&[u8]>) -> Result<Value> {
+        // Build FS request parameters
+        let params = match op_type {
+            "fs_read" => vec![
+                Value::String("fs_read".into()),
+                Value::String(self.namespace.clone().into()),
+                Value::String(path.into()),
+            ],
+            "fs_write" => vec![
+                Value::String("fs_write".into()),
+                Value::String(self.namespace.clone().into()),
+                Value::String(path.into()),
+                Value::Binary(data.unwrap_or(&[]).to_vec()),
+            ],
+            "fs_stat" => vec![
+                Value::String("fs_stat".into()),
+                Value::String(self.namespace.clone().into()),
+                Value::String(path.into()),
+            ],
+            "fs_list" => vec![
+                Value::String("fs_list".into()),
+                Value::String(self.namespace.clone().into()),
+                Value::String(path.into()),
+            ],
+            _ => bail!("unknown fs operation: {}", op_type),
+        };
+        
+        // Use rpc_sync infrastructure for ID generation and blocking
+        crate::rpc_sync::fs_rpc_call_via_channel(&self.ws_tx, op_type, params)
     }
 }
 
@@ -111,4 +137,5 @@ impl VfsBackend for BrowserFsBackend {
         }
     }
 }
+
 
