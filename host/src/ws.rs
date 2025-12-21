@@ -190,6 +190,13 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                                     path_str.to_string(),
                                 ) {
                                     eprintln!("VFS open error: {}", e);
+                                    // Notify Neovim of the error
+                                    let error_msg = format!("VFS open failed: {}", e);
+                                    let _ = crate::rpc::send_notification(
+                                        nvim_stdin,
+                                        "nvim_err_writeln",
+                                        vec![Value::String(error_msg.into())],
+                                    );
                                 }
                             }
                         }
@@ -204,6 +211,13 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                                     bufnr_u64 as u32,
                                 ) {
                                     eprintln!("VFS write error: {}", e);
+                                    // Notify Neovim of the error
+                                    let error_msg = format!("VFS write failed: {}", e);
+                                    let _ = crate::rpc::send_notification(
+                                        nvim_stdin,
+                                        "nvim_err_writeln",
+                                        vec![Value::String(error_msg.into())],
+                                    );
                                 }
                             }
                         }

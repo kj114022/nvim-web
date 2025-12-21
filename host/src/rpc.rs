@@ -66,6 +66,18 @@ pub fn send_resize(stdin: &mut impl Write, rows: u64, cols: u64) -> Result<()> {
     Ok(())
 }
 
+/// Send a notification to Neovim (no response expected)
+pub fn send_notification(stdin: &mut impl Write, method: &str, params: Vec<Value>) -> Result<()> {
+    let msg = Value::Array(vec![
+        Value::Integer(2.into()),  // Notification type
+        Value::String(method.into()),
+        Value::Array(params),
+    ]);
+    rmpv::encode::write_value(stdin, &msg)?;
+    stdin.flush()?;
+    Ok(())
+}
+
 pub fn read_loop(stdout: &mut impl Read) -> Result<()> {
     println!("Starting read loop...");
     loop {
