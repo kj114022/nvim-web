@@ -1,13 +1,33 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8"/>
-    <title>Neovim Web UI - Phase 3</title>
+    <title>Neovim Web</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background: #1a1a1a;
+        overflow: hidden;
+      }
+      #editor-root {
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+      }
+      #nvim {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
   </head>
   <body>
-    <canvas id="nvim" width="640" height="384"></canvas>
+    <div id="editor-root" tabindex="0">
+      <canvas id="nvim"></canvas>
+    </div>
     <script type="module">
-      import init from "./nvim_web_ui.js";
+      import init from "./pkg/nvim_web_ui.js";
       init();
     </script>
   </body>
