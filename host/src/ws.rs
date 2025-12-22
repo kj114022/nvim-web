@@ -1,6 +1,6 @@
 use std::net::{TcpListener, TcpStream};
 use std::io::Write;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use tungstenite::{accept, Message, WebSocket};
 use anyhow::Result;
@@ -13,6 +13,60 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
     let server = TcpListener::bind("0.0.0.0:9001")?;
     println!("WebSocket server listening on ws://0.0.0.0:9001");
 
+    // Attach UI ONCE at startup, before accepting any connections
+    println!("Attaching Neovim UI...");
+    crate::rpc::attach_ui(&mut nvim.stdin)?;
+    println!("Waiting for UI attach response...");
+    let _response = crate::rpc::read_message(&mut nvim.stdout)?;
+    println!("UI attached successfully, ready for connections");
+
+    // Create a persistent channel for Neovim redraw events
+    // This channel lives across multiple WebSocket connections
+    let (nvim_tx, nvim_rx) = mpsc::channel::<Vec<u8>>();
+    let nvim_rx = Arc::new(Mutex::new(nvim_rx));
+    
+    // Spawn the Neovim reader thread ONCE, before accepting connections
+    // This thread reads from Neovim stdout and sends to the channel
+    let mut nvim_stdout = unsafe { 
+        std::ptr::read(&nvim.stdout as *const _)
+    };
+    
+    thread::spawn(move || {
+        loop {
+            match crate::rpc::read_message(&mut nvim_stdout) {
+                Ok(msg) => {
+                    // Handle RPC responses (type 1) - route to sync module
+                    if let rmpv::Value::Array(ref arr) = msg {
+                        if !arr.is_empty() {
+                            if let rmpv::Value::Integer(msg_type) = &arr[0] {
+                                if msg_type.as_u64() == Some(1) {
+                                    if let Err(e) = crate::rpc_sync::handle_rpc_response(&msg) {
+                                        eprintln!("Error handling RPC response: {}", e);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Handle redraw notifications (type 2) - send to channel
+                    if crate::rpc::is_redraw(&msg) {
+                        let mut bytes = Vec::new();
+                        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                            // Channel send - if all receivers are gone, just drop the message
+                            // This happens when no browser is connected, which is fine
+                            let _ = nvim_tx.send(bytes);
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("Neovim stdout closed, exiting reader thread");
+                    break;
+                }
+            }
+        }
+    });
+
     // Accept connections in a loop - new connections replace old ones
     loop {
         println!("Waiting for UI connection...");
@@ -24,110 +78,69 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
                     Ok(mut websocket) => {
                         println!("WebSocket handshake complete");
                         
-                        // Run the bridge - this blocks until the connection closes
-                        if let Err(e) = bridge(nvim, &mut websocket) {
+                        // Drain any stale messages from channel before starting bridge
+                        // This ensures the new client gets fresh state, not cached old redraws
+                        let rx_lock = nvim_rx.lock().unwrap();
+                        while rx_lock.try_recv().is_ok() {}
+                        drop(rx_lock);
+                        
+                        // Force a full redraw by sending resize to current dimensions
+                        // This makes Neovim re-emit all UI state to the new client
+                        eprintln!("Requesting full redraw for new connection...");
+                        let _ = crate::rpc::send_notification(
+                            &mut nvim.stdin,
+                            "nvim_ui_try_resize",
+                            vec![
+                                Value::Integer(80.into()),
+                                Value::Integer(24.into()),
+                            ],
+                        );
+                        
+                        // Run the bridge with the shared channel
+                        if let Err(e) = bridge(nvim, &mut websocket, nvim_rx.clone()) {
                             eprintln!("Bridge error: {}", e);
                         }
                         
                         println!("UI disconnected, waiting for new connection...");
-                        // Loop continues, ready to accept new connection
                     }
                     Err(e) => {
                         eprintln!("WebSocket handshake failed: {}", e);
-                        // Continue to accept next connection
                     }
                 }
             }
             Err(e) => {
                 eprintln!("Accept failed: {}", e);
-                // Brief delay before retrying
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
     }
 }
 
-fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
-    // Send initial UI attach
-    crate::rpc::attach_ui(&mut nvim.stdin)?;
-    
-    // Wait for UI attach response to ensure Neovim is ready
-    // Read and discard the response message
-    eprintln!("Waiting for UI attach response...");
-    let _response = crate::rpc::read_message(&mut nvim.stdout)?;
-    eprintln!("UI attach complete, starting bridge");
-    
-    // NOTE: VFS autocmd registration temporarily removed
-    // The synchronous rpc_call was blocking because redraw events
-    // were ahead of the RPC response in Neovim's output pipe.
-    // TODO: Add VFS support back with async RPC or fire-and-forget notification
+fn bridge(
+    nvim: &mut Nvim, 
+    ws: &mut WebSocket<TcpStream>,
+    nvim_rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>
+) -> Result<()> {
+    eprintln!("Starting bridge for new connection");
     
     // Initialize VFS Manager with backends
     let mut vfs_manager = VfsManager::new();
+    let (to_ws_tx, _to_ws_rx) = mpsc::channel::<Vec<u8>>();
     
-    // Register LocalFs backend for vfs://local/...
     let local_backend = Box::new(LocalFs::new("/tmp/nvim-web"));
     vfs_manager.register_backend("local", local_backend);
     
-    // Create channels for thread communication
-    let (to_ws_tx, to_ws_rx) = mpsc::channel::<Vec<u8>>();
-    let (to_nvim_tx, to_nvim_rx) = mpsc::channel::<Vec<u8>>();
-    
-    // Register BrowserFs backend for vfs://browser/...
-    // Pass channel sender so backend can send FS requests to WS
     let browser_backend = Box::new(BrowserFsBackend::new("default", to_ws_tx.clone()));
     vfs_manager.register_backend("browser", browser_backend);
-    
-    // Note: SSH backend (vfs://ssh/...) is created dynamically on-demand
-    // because it requires connection info in the URI. See VfsManager::read_file/write_file
     eprintln!("VFS backends registered: local, browser (ssh on-demand)");
     
-    // Thread 1: Read from Neovim stdout, forward redraw events to WebSocket
-    let mut nvim_stdout = unsafe { 
-        // SAFETY: We're moving ownership of stdout to this thread
-        // The main thread will not touch it again
-        std::ptr::read(&nvim.stdout as *const _)
-    };
+    // Channel for browser->Neovim messages
+    let (to_nvim_tx, to_nvim_rx) = mpsc::channel::<Vec<u8>>();
     
-    thread::spawn(move || {
-        loop {
-            match crate::rpc::read_message(&mut nvim_stdout) {
-                Ok(msg) => {
-                    // Handle RPC responses (type 1)
-                    if let rmpv::Value::Array(ref arr) = msg {
-                        if !arr.is_empty() {
-                            if let rmpv::Value::Integer(msg_type) = &arr[0] {
-                                if msg_type.as_u64() == Some(1) {
-                                    // RPC response - route to rpc_sync
-                                    if let Err(e) = crate::rpc_sync::handle_rpc_response(&msg) {
-                                        eprintln!("Error handling RPC response: {}", e);
-                                    }
-                                    continue; // Don't send to WebSocket
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Handle redraw notifications (type 2)
-                    if crate::rpc::is_redraw(&msg) {
-                        eprintln!("HOST: REDRAW EVENT RECEIVED");
-                        
-                        let mut bytes = Vec::new();
-                        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
-                            eprintln!("HOST: Sending {} bytes to channel", bytes.len());
-                            if to_ws_tx.send(bytes).is_err() {
-                                eprintln!("HOST: Channel send failed!");
-                                break; // Channel closed, exit thread
-                            }
-                        }
-                    }
-                }
-                Err(_) => break, // Neovim exited
-            }
-        }
-    });
+    // Channel to signal when WS reader exits
+    let (ws_done_tx, ws_done_rx) = mpsc::channel::<()>();
     
-    // Thread 2: Read from WebSocket, forward input to Neovim
+    // Thread to read from WebSocket and forward to Neovim
     let ws_stream = ws.get_ref().try_clone()?;
     let mut ws_read = WebSocket::from_raw_socket(ws_stream, tungstenite::protocol::Role::Server, None);
     
@@ -136,42 +149,49 @@ fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
             match ws_read.read() {
                 Ok(Message::Binary(data)) => {
                     if to_nvim_tx.send(data).is_err() {
-                        break; // Channel closed, exit thread
+                        break;
                     }
                 }
                 Ok(Message::Close(_)) | Err(_) => {
-                    break; // WebSocket closed or error
+                    break;
                 }
-                _ => {} // Ignore other message types
+                _ => {}
             }
         }
+        let _ = ws_done_tx.send(());
     });
     
-    // Main loop: Forward messages between channels and endpoints
+    // Main bridge loop
     loop {
-        // Forward Neovim messages to WebSocket
-        if let Ok(bytes) = to_ws_rx.try_recv() {
-            eprintln!("HOST: SENDING {} bytes TO WS", bytes.len());
-            if ws.send(Message::Binary(bytes)).is_err() {
-                eprintln!("HOST: WS send failed!");
-                break;
+        // Check if browser disconnected
+        if ws_done_rx.try_recv().is_ok() {
+            eprintln!("HOST: Browser disconnected, exiting bridge");
+            break;
+        }
+        
+        // Forward Neovim messages to WebSocket (from shared channel)
+        if let Ok(rx) = nvim_rx.try_lock() {
+            if let Ok(bytes) = rx.try_recv() {
+                drop(rx); // Release lock before blocking WS send
+                if ws.send(Message::Binary(bytes)).is_err() {
+                    eprintln!("HOST: WS send failed!");
+                    break;
+                }
             }
         }
         
-        // Forward WebSocket messages to Neovim/VFS
+        // Forward WebSocket messages to Neovim
         if let Ok(data) = to_nvim_rx.try_recv() {
             let mut cursor = std::io::Cursor::new(data);
             if let Ok(value) = rmpv::decode::read_value(&mut cursor) {
-                // Check if this is an FS response (type 3)
                 if let Value::Array(ref arr) = value {
                     if !arr.is_empty() {
                         if let Value::Integer(msg_type) = &arr[0] {
                             if msg_type.as_u64() == Some(3) {
-                                // FS response from browser - route to rpc_sync
                                 if let Err(e) = crate::rpc_sync::handle_fs_response(&value) {
                                     eprintln!("Error handling FS response: {}", e);
                                 }
-                                continue; // Don't process as browser message
+                                continue;
                             }
                         }
                     }
@@ -183,7 +203,6 @@ fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
             }
         }
         
-        // Small sleep to avoid busy loop
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     
@@ -197,7 +216,6 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
             if let Value::String(method) = &arr[0] {
                 match method.as_str() {
                     Some("open_vfs") => {
-                        // Handle VFS file open: ["open_vfs", path]
                         if let Value::String(path) = &arr[1] {
                             if let Some(path_str) = path.as_str() {
                                 if let Err(e) = crate::vfs_handlers::handle_open_vfs(
@@ -206,7 +224,6 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                                     path_str.to_string(),
                                 ) {
                                     eprintln!("VFS open error: {}", e);
-                                    // Notify Neovim of the error
                                     let error_msg = format!("VFS open failed: {}", e);
                                     let _ = crate::rpc::send_notification(
                                         nvim_stdin,
@@ -218,7 +235,6 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                         }
                     }
                     Some("write_vfs") => {
-                        // Handle VFS buffer write: ["write_vfs", bufnr]
                         if let Value::Integer(bufnr) = &arr[1] {
                             if let Some(bufnr_u64) = bufnr.as_u64() {
                                 if let Err(e) = crate::vfs_handlers::handle_write_vfs(
@@ -227,7 +243,6 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                                     bufnr_u64 as u32,
                                 ) {
                                     eprintln!("VFS write error: {}", e);
-                                    // Notify Neovim of the error
                                     let error_msg = format!("VFS write failed: {}", e);
                                     let _ = crate::rpc::send_notification(
                                         nvim_stdin,
@@ -239,7 +254,6 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                         }
                     }
                     Some("input") => {
-                        // arr[1] should be the key string
                         if let Value::String(keys) = &arr[1] {
                             if let Some(key_str) = keys.as_str() {
                                 crate::rpc::send_input(nvim_stdin, key_str)?;
@@ -247,10 +261,11 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                         }
                     }
                     Some("resize") => {
-                        // arr[1] = rows, arr[2] = cols
                         if arr.len() >= 3 {
-                            if let (Value::Integer(rows), Value::Integer(cols)) = (&arr[1], &arr[2]) {
-                                crate::rpc::send_resize(nvim_stdin, rows.as_u64().unwrap_or(24), cols.as_u64().unwrap_or(80))?;
+                            if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
+                                let cols = cols.as_u64().unwrap_or(80);
+                                let rows = rows.as_u64().unwrap_or(24);
+                                crate::rpc::send_resize(nvim_stdin, cols, rows)?;
                             }
                         }
                     }
