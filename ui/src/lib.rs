@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{window, HtmlCanvasElement, WebSocket, MessageEvent, KeyboardEvent};
+use web_sys::{window, HtmlCanvasElement, WebSocket, MessageEvent, KeyboardEvent, ResizeObserver, ResizeObserverEntry};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -18,8 +18,20 @@ pub fn start() -> Result<(), JsValue> {
         .unwrap()
         .dyn_into::<HtmlCanvasElement>()?;
 
-    let grid = Rc::new(RefCell::new(Grid::new(24, 80)));
-    let renderer = Renderer::new(canvas);
+    let renderer = Renderer::new(canvas.clone());
+    
+    // Get initial size from canvas CSS dimensions
+    let (cell_w, cell_h) = renderer.cell_size();
+    let css_width = canvas.client_width() as f64;
+    let css_height = canvas.client_height() as f64;
+    let initial_cols = (css_width / cell_w).floor() as usize;
+    let initial_rows = (css_height / cell_h).floor() as usize;
+    
+    let grid = Rc::new(RefCell::new(Grid::new(initial_rows.max(24), initial_cols.max(80))));
+    let renderer = Rc::new(renderer);
+
+    // Apply initial HiDPI scaling
+    renderer.resize(css_width, css_height);
 
     // Initial render
     renderer.draw(&grid.borrow());
@@ -52,6 +64,44 @@ pub fn start() -> Result<(), JsValue> {
     
     ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
     onmessage.forget();
+
+    // D1.1: ResizeObserver for window resize handling
+    let grid_resize = grid.clone();
+    let renderer_resize = renderer.clone();
+    let ws_resize = ws.clone();
+    let resize_callback = Closure::wrap(Box::new(move |entries: js_sys::Array| {
+        for i in 0..entries.length() {
+            if let Ok(entry) = entries.get(i).dyn_into::<ResizeObserverEntry>() {
+                let rect = entry.content_rect();
+                let css_width = rect.width();
+                let css_height = rect.height();
+
+                // D1 + D2: Resize canvas with HiDPI handling
+                let (new_rows, new_cols) = renderer_resize.resize(css_width, css_height);
+
+                // Update grid dimensions
+                grid_resize.borrow_mut().resize(new_rows, new_cols);
+
+                // D1.2: Send ui_try_resize to Neovim
+                let msg = rmpv::Value::Array(vec![
+                    rmpv::Value::String("resize".into()),
+                    rmpv::Value::Integer((new_cols as i64).into()),
+                    rmpv::Value::Integer((new_rows as i64).into()),
+                ]);
+                let mut bytes = Vec::new();
+                if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                    let _ = ws_resize.send_with_u8_array(&bytes);
+                }
+
+                // D1.3: Full redraw
+                renderer_resize.draw(&grid_resize.borrow());
+            }
+        }
+    }) as Box<dyn FnMut(_)>);
+
+    let observer = ResizeObserver::new(resize_callback.as_ref().unchecked_ref())?;
+    observer.observe(&canvas);
+    resize_callback.forget();
 
     // Handle keyboard input
     let ws_clone = ws.clone();
@@ -168,6 +218,16 @@ fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
                                     // Clear grid
                                     for cell in &mut grid.cells {
                                         cell.ch = ' ';
+                                    }
+                                }
+                                Some("grid_resize") => {
+                                    // grid_resize: ["grid_resize", grid_id, width, height]
+                                    if ev.len() >= 4 {
+                                        if let (rmpv::Value::Integer(width), rmpv::Value::Integer(height)) = (&ev[2], &ev[3]) {
+                                            let new_cols = width.as_u64().unwrap_or(80) as usize;
+                                            let new_rows = height.as_u64().unwrap_or(24) as usize;
+                                            grid.resize(new_rows, new_cols);
+                                        }
                                     }
                                 }
                                 _ => {} // Ignore unsupported events for now

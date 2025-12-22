@@ -29,5 +29,9 @@ features = [
   "EventTarget",
   "console",
   "TextMetrics",
+  "ResizeObserver",
+  "ResizeObserverEntry",
+  "DomRectReadOnly",
 ]
+
 
