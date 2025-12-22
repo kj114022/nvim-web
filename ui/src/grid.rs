@@ -33,6 +33,7 @@ impl Grid {
     }
 
     /// Clear all selection
+    #[allow(dead_code)]
     pub fn clear_selection(&mut self) {
         for cell in &mut self.cells {
             cell.selected = false;
@@ -40,6 +41,7 @@ impl Grid {
     }
 
     /// Set selection for a cell
+    #[allow(dead_code)]
     pub fn set_selected(&mut self, row: usize, col: usize, selected: bool) {
         if row < self.rows && col < self.cols {
             self.cells[row * self.cols + col].selected = selected;

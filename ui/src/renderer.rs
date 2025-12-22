@@ -7,6 +7,10 @@ use crate::grid::Grid;
 const SELECTION_COLOR: &str = "rgba(0, 120, 215, 0.35)";
 // Focus overlay: subtle dim
 const FOCUS_LOST_OVERLAY: &str = "rgba(0, 0, 0, 0.08)";
+// Cached style strings to avoid allocations
+const BG_COLOR: &str = "white";
+const TEXT_COLOR: &str = "black";
+const CURSOR_COLOR: &str = "#000000";
 
 #[derive(Clone)]
 pub struct Renderer {
@@ -40,16 +44,14 @@ impl Renderer {
         let descent = metrics.actual_bounding_box_descent();
         let cell_h = ascent + descent;
 
-        let renderer = Self {
+        Self {
             canvas: Rc::new(canvas),
             ctx: Rc::new(ctx),
             cell_w,
             cell_h,
             ascent,
             dpr,
-        };
-
-        renderer
+        }
     }
 
     /// Get cell dimensions for row/col calculation
@@ -84,18 +86,16 @@ impl Renderer {
         (rows.max(1), cols.max(1))
     }
 
+    #[allow(deprecated)]  // web-sys set_fill_style deprecation is overzealous
     pub fn draw(&self, grid: &Grid) {
         let css_width = (grid.cols as f64) * self.cell_w;
         let css_height = (grid.rows as f64) * self.cell_h;
 
-        // D1.3: Clear entire canvas before redraw
-        self.ctx.clear_rect(0.0, 0.0, css_width, css_height);
-
-        // Step 1: Background (normal)
-        self.ctx.set_fill_style(&"white".into());
+        // Step 1: Background fills entire canvas (no need for clear_rect - overdraw)
+        self.ctx.set_fill_style(&BG_COLOR.into());
         self.ctx.fill_rect(0.0, 0.0, css_width, css_height);
 
-        // Step 2: Selection background (before text)
+        // Step 2: Selection backgrounds (set style once, draw all)
         self.ctx.set_fill_style(&SELECTION_COLOR.into());
         for row in 0..grid.rows {
             for col in 0..grid.cols {
@@ -108,24 +108,26 @@ impl Renderer {
             }
         }
 
-        // Step 3: Text
-        self.ctx.set_fill_style(&"black".into());
+        // Step 3: Text (set style once, draw all non-space chars)
+        self.ctx.set_fill_style(&TEXT_COLOR.into());
         for row in 0..grid.rows {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
                 if cell.ch != ' ' {
-                    // Baseline-correct: y = row * cell_h + ascent
-                    self.ctx.fill_text(
-                        &cell.ch.to_string(),
+                    // Use encode_utf8 with let-bound buffer to avoid String allocation
+                    let mut buf = [0u8; 4];
+                    let s = cell.ch.encode_utf8(&mut buf);
+                    let _ = self.ctx.fill_text(
+                        s,
                         (col as f64) * self.cell_w,
                         (row as f64) * self.cell_h + self.ascent,
-                    ).unwrap();
+                    );
                 }
             }
         }
 
         // Step 4: Cursor (on top of everything except focus overlay)
-        self.ctx.set_fill_style(&"#000000".into());
+        self.ctx.set_fill_style(&CURSOR_COLOR.into());
         self.ctx.fill_rect(
             (grid.cursor_col as f64) * self.cell_w,
             (grid.cursor_row as f64) * self.cell_h,
