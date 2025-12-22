@@ -1,16 +1,29 @@
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
 use wasm_bindgen::JsCast;
 use std::rc::Rc;
+use std::cell::RefCell;
 use crate::grid::Grid;
+use crate::highlight::HighlightMap;
 
+// Default colors (Neovim dark theme)
+const DEFAULT_BG: &str = "#1a1a1a";
+const DEFAULT_FG: &str = "#cccccc";
 // Selection color: Windows-style blue with alpha
 const SELECTION_COLOR: &str = "rgba(0, 120, 215, 0.35)";
 // Focus overlay: subtle dim
 const FOCUS_LOST_OVERLAY: &str = "rgba(0, 0, 0, 0.08)";
-// Cached style strings to avoid allocations
-const BG_COLOR: &str = "white";
-const TEXT_COLOR: &str = "black";
-const CURSOR_COLOR: &str = "#000000";
+// Cursor color
+const CURSOR_COLOR: &str = "#ff6600";
+
+/// Convert RGB u32 to CSS string
+fn rgb_to_css(rgb: u32) -> String {
+    format!(
+        "rgb({},{},{})",
+        (rgb >> 16) & 0xff,
+        (rgb >> 8) & 0xff,
+        rgb & 0xff
+    )
+}
 
 #[derive(Clone)]
 pub struct Renderer {
@@ -20,6 +33,9 @@ pub struct Renderer {
     cell_h: f64,
     ascent: f64,
     dpr: f64,
+    // Color caches to avoid per-cell allocations
+    cached_fg: Rc<RefCell<Option<(u32, String)>>>,
+    cached_bg: Rc<RefCell<Option<(u32, String)>>>,
 }
 
 impl Renderer {
@@ -51,6 +67,8 @@ impl Renderer {
             cell_h,
             ascent,
             dpr,
+            cached_fg: Rc::new(RefCell::new(None)),
+            cached_bg: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -87,46 +105,98 @@ impl Renderer {
     }
 
     #[allow(deprecated)]  // web-sys set_fill_style deprecation is overzealous
-    pub fn draw(&self, grid: &Grid) {
-        let css_width = (grid.cols as f64) * self.cell_w;
-        let css_height = (grid.rows as f64) * self.cell_h;
+    pub fn draw(&self, grid: &Grid, highlights: &HighlightMap) {
+        let grid_width = (grid.cols as f64) * self.cell_w;
+        let grid_height = (grid.rows as f64) * self.cell_h;
+        
+        // Get actual canvas dimensions (CSS pixels, accounting for transform)
+        let canvas_width = self.canvas.width() as f64 / self.dpr;
+        let canvas_height = self.canvas.height() as f64 / self.dpr;
 
-        // Step 1: Background fills entire canvas (no need for clear_rect - overdraw)
-        self.ctx.set_fill_style(&BG_COLOR.into());
-        self.ctx.fill_rect(0.0, 0.0, css_width, css_height);
+        // Step 1: Clear entire canvas with default background
+        // This prevents artifacts outside the grid area
+        self.ctx.set_fill_style(&DEFAULT_BG.into());
+        self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
 
-        // Step 2: Selection backgrounds (set style once, draw all)
-        self.ctx.set_fill_style(&SELECTION_COLOR.into());
+        // Step 2: Per-cell background and text rendering
+        // We batch by going through all cells, drawing bg then text per-cell
+        // This is less optimal than pure batching but necessary for per-cell colors
         for row in 0..grid.rows {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
+                let x = (col as f64) * self.cell_w;
+                let y = (row as f64) * self.cell_h;
+                
+                // Get highlight attributes if present
+                let hl = cell.hl_id.and_then(|id| highlights.get(id));
+                
+                // Draw background if different from default
+                if let Some(hl) = hl {
+                    if let Some(bg) = hl.bg {
+                        let bg_css = {
+                            let mut cache = self.cached_bg.borrow_mut();
+                            if let Some((cached, ref css)) = *cache {
+                                if cached == bg {
+                                    css.clone()
+                                } else {
+                                    let css = rgb_to_css(bg);
+                                    *cache = Some((bg, css.clone()));
+                                    css
+                                }
+                            } else {
+                                let css = rgb_to_css(bg);
+                                *cache = Some((bg, css.clone()));
+                                css
+                            }
+                        };
+                        self.ctx.set_fill_style(&bg_css.into());
+                        self.ctx.fill_rect(x, y, self.cell_w, self.cell_h);
+                    }
+                }
+                
+                // Draw selection overlay if selected
                 if cell.selected {
-                    let x = (col as f64) * self.cell_w;
-                    let y = (row as f64) * self.cell_h;
+                    self.ctx.set_fill_style(&SELECTION_COLOR.into());
                     self.ctx.fill_rect(x, y, self.cell_w, self.cell_h);
                 }
-            }
-        }
-
-        // Step 3: Text (set style once, draw all non-space chars)
-        self.ctx.set_fill_style(&TEXT_COLOR.into());
-        for row in 0..grid.rows {
-            for col in 0..grid.cols {
-                let cell = &grid.cells[row * grid.cols + col];
+                
+                // Draw text if not space
                 if cell.ch != ' ' {
+                    // Get foreground color
+                    let fg_css = if let Some(hl) = hl {
+                        if let Some(fg) = hl.fg {
+                            let mut cache = self.cached_fg.borrow_mut();
+                            if let Some((cached, ref css)) = *cache {
+                                if cached == fg {
+                                    css.clone()
+                                } else {
+                                    let css = rgb_to_css(fg);
+                                    *cache = Some((fg, css.clone()));
+                                    css
+                                }
+                            } else {
+                                let css = rgb_to_css(fg);
+                                *cache = Some((fg, css.clone()));
+                                css
+                            }
+                        } else {
+                            DEFAULT_FG.to_string()
+                        }
+                    } else {
+                        DEFAULT_FG.to_string()
+                    };
+                    
+                    self.ctx.set_fill_style(&fg_css.into());
+                    
                     // Use encode_utf8 with let-bound buffer to avoid String allocation
                     let mut buf = [0u8; 4];
                     let s = cell.ch.encode_utf8(&mut buf);
-                    let _ = self.ctx.fill_text(
-                        s,
-                        (col as f64) * self.cell_w,
-                        (row as f64) * self.cell_h + self.ascent,
-                    );
+                    let _ = self.ctx.fill_text(s, x, y + self.ascent);
                 }
             }
         }
 
-        // Step 4: Cursor (on top of everything except focus overlay)
+        // Step 3: Cursor (on top of everything except focus overlay)
         self.ctx.set_fill_style(&CURSOR_COLOR.into());
         self.ctx.fill_rect(
             (grid.cursor_col as f64) * self.cell_w,
@@ -135,10 +205,10 @@ impl Renderer {
             self.cell_h,
         );
 
-        // Step 5: Focus overlay (after all drawing, if unfocused)
+        // Step 4: Focus overlay (after all drawing, if unfocused)
         if !grid.is_focused {
             self.ctx.set_fill_style(&FOCUS_LOST_OVERLAY.into());
-            self.ctx.fill_rect(0.0, 0.0, css_width, css_height);
+            self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
         }
     }
 }

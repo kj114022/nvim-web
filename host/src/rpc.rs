@@ -10,7 +10,9 @@ pub fn attach_ui(stdin: &mut impl Write) -> Result<()> {
         Value::Array(vec![
             Value::Integer(80.into()),            // width
             Value::Integer(24.into()),            // height
-            Value::Map(vec![]),                   // opts
+            Value::Map(vec![                      // opts - enable linegrid extension
+                (Value::String("ext_linegrid".into()), Value::Boolean(true)),
+            ]),
         ]),
     ]);
 

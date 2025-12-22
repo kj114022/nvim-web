@@ -13,14 +13,38 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
     let server = TcpListener::bind("0.0.0.0:9001")?;
     println!("WebSocket server listening on ws://0.0.0.0:9001");
 
-    let (stream, _) = server.accept()?;
-    println!("Client connected");
-
-    let mut websocket = accept(stream)?;
-    
-    bridge(nvim, &mut websocket)?;
-    
-    Ok(())
+    // Accept connections in a loop - new connections replace old ones
+    loop {
+        println!("Waiting for UI connection...");
+        match server.accept() {
+            Ok((stream, addr)) => {
+                println!("UI connected from {:?}", addr);
+                
+                match accept(stream) {
+                    Ok(mut websocket) => {
+                        println!("WebSocket handshake complete");
+                        
+                        // Run the bridge - this blocks until the connection closes
+                        if let Err(e) = bridge(nvim, &mut websocket) {
+                            eprintln!("Bridge error: {}", e);
+                        }
+                        
+                        println!("UI disconnected, waiting for new connection...");
+                        // Loop continues, ready to accept new connection
+                    }
+                    Err(e) => {
+                        eprintln!("WebSocket handshake failed: {}", e);
+                        // Continue to accept next connection
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Accept failed: {}", e);
+                // Brief delay before retrying
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
 }
 
 fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
@@ -33,21 +57,10 @@ fn bridge(nvim: &mut Nvim, ws: &mut WebSocket<TcpStream>) -> Result<()> {
     let _response = crate::rpc::read_message(&mut nvim.stdout)?;
     eprintln!("UI attach complete, starting bridge");
     
-    // Register VFS autocmd for BufWriteCmd
-    eprintln!("Registering VFS BufWriteCmd autocmd...");
-    let autocmd_script = r#"
-augroup NvimWebVFS
-  autocmd!
-  autocmd BufWriteCmd vfs://* call rpcnotify(0, "write_vfs", bufnr())
-augroup END
-"#;
-    
-    crate::rpc_sync::rpc_call(
-        &mut nvim.stdin,
-        "nvim_command",
-        vec![rmpv::Value::String(autocmd_script.into())],
-    )?;
-    eprintln!("VFS autocmd registered successfully");
+    // NOTE: VFS autocmd registration temporarily removed
+    // The synchronous rpc_call was blocking because redraw events
+    // were ahead of the RPC response in Neovim's output pipe.
+    // TODO: Add VFS support back with async RPC or fire-and-forget notification
     
     // Initialize VFS Manager with backends
     let mut vfs_manager = VfsManager::new();
@@ -97,12 +110,13 @@ augroup END
                     
                     // Handle redraw notifications (type 2)
                     if crate::rpc::is_redraw(&msg) {
-                        // Debug: print raw redraw event to stderr
-                        eprintln!("RAW_REDRAW: {:?}", msg);
+                        eprintln!("HOST: REDRAW EVENT RECEIVED");
                         
                         let mut bytes = Vec::new();
                         if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                            eprintln!("HOST: Sending {} bytes to channel", bytes.len());
                             if to_ws_tx.send(bytes).is_err() {
+                                eprintln!("HOST: Channel send failed!");
                                 break; // Channel closed, exit thread
                             }
                         }
@@ -137,7 +151,9 @@ augroup END
     loop {
         // Forward Neovim messages to WebSocket
         if let Ok(bytes) = to_ws_rx.try_recv() {
+            eprintln!("HOST: SENDING {} bytes TO WS", bytes.len());
             if ws.send(Message::Binary(bytes)).is_err() {
+                eprintln!("HOST: WS send failed!");
                 break;
             }
         }

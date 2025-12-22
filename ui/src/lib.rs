@@ -59,15 +59,17 @@ impl InputQueue {
 /// Render state for RAF-based batching
 struct RenderState {
     grid: Rc<RefCell<Grid>>,
+    highlights: Rc<RefCell<HighlightMap>>,
     renderer: Rc<Renderer>,
     needs_render: Rc<RefCell<bool>>,
     raf_scheduled: Rc<RefCell<bool>>,
 }
 
 impl RenderState {
-    fn new(grid: Rc<RefCell<Grid>>, renderer: Rc<Renderer>) -> Rc<Self> {
+    fn new(grid: Rc<RefCell<Grid>>, highlights: Rc<RefCell<HighlightMap>>, renderer: Rc<Renderer>) -> Rc<Self> {
         Rc::new(Self {
             grid,
+            highlights,
             renderer,
             needs_render: Rc::new(RefCell::new(false)),
             raf_scheduled: Rc::new(RefCell::new(false)),
@@ -99,14 +101,14 @@ impl RenderState {
         
         if *self.needs_render.borrow() {
             *self.needs_render.borrow_mut() = false;
-            self.renderer.draw(&self.grid.borrow());
+            self.renderer.draw(&self.grid.borrow(), &self.highlights.borrow());
         }
     }
 
     /// Force immediate render (for resize, focus changes)
     fn render_now(&self) {
         *self.needs_render.borrow_mut() = false;
-        self.renderer.draw(&self.grid.borrow());
+        self.renderer.draw(&self.grid.borrow(), &self.highlights.borrow());
     }
 }
 
@@ -129,28 +131,71 @@ pub fn start() -> Result<(), JsValue> {
     
     let grid = Rc::new(RefCell::new(Grid::new(initial_rows.max(24), initial_cols.max(80))));
     let renderer = Rc::new(renderer);
+    
+    // Phase 9.2.1: Highlight storage (needed for RenderState)
+    let highlights = Rc::new(RefCell::new(HighlightMap::new()));
 
     // Apply initial HiDPI scaling
     renderer.resize(css_width, css_height);
 
     // Create render state for batching
-    let render_state = RenderState::new(grid.clone(), renderer.clone());
+    let render_state = RenderState::new(grid.clone(), highlights.clone(), renderer.clone());
 
     // Initial render
     render_state.render_now();
 
-    // Connect to WebSocket
-    let ws = WebSocket::new("ws://127.0.0.1:9001")?;
+    // Connect to WebSocket with full lifecycle logging
+    web_sys::console::log_1(&"WS CREATING...".into());
+    let ws = match WebSocket::new("ws://127.0.0.1:9001") {
+        Ok(ws) => {
+            web_sys::console::log_1(&"WS CREATED".into());
+            ws
+        }
+        Err(e) => {
+            web_sys::console::error_1(&"WS CREATE FAILED".into());
+            web_sys::console::error_1(&e);
+            return Err(e);
+        }
+    };
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
-    // Phase 9.2.1: Highlight storage
-    let highlights = Rc::new(RefCell::new(HighlightMap::new()));
+    // Expose WS to window for debugging
+    let _ = js_sys::Reflect::set(
+        &window().unwrap(),
+        &"__nvim_ws".into(),
+        &ws.clone().into(),
+    );
+
+    // WS lifecycle: onopen
+    let onopen = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        web_sys::console::log_1(&"WS OPEN".into());
+    }) as Box<dyn FnMut(_)>);
+    ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
+    onopen.forget();
+
+    // WS lifecycle: onerror
+    let onerror = Closure::wrap(Box::new(move |e: web_sys::ErrorEvent| {
+        web_sys::console::error_1(&"WS ERROR".into());
+        web_sys::console::error_1(&e);
+    }) as Box<dyn FnMut(_)>);
+    ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+    onerror.forget();
+
+    // WS lifecycle: onclose
+    let onclose = Closure::wrap(Box::new(move |e: web_sys::CloseEvent| {
+        web_sys::console::warn_1(&"WS CLOSE".into());
+        web_sys::console::warn_1(&format!("code={}, reason={}", e.code(), e.reason()).into());
+    }) as Box<dyn FnMut(_)>);
+    ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
+    onclose.forget();
+
 
     // Handle incoming redraw events with batching
     let grid_msg = grid.clone();
     let render_state_msg = render_state.clone();
     let highlights_msg = highlights.clone();
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
+        web_sys::console::log_1(&"WS MESSAGE".into());
         if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
             let array = js_sys::Uint8Array::new(&abuf);
             let bytes = array.to_vec();
@@ -209,10 +254,16 @@ pub fn start() -> Result<(), JsValue> {
     observer.observe(&canvas);
     resize_callback.forget();
 
+    // Get the focusable wrapper div (canvas focus is unreliable across browsers)
+    let editor_root = document
+        .get_element_by_id("editor-root")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlElement>()?;
+
     // Phase 9.1.2: Input queue for decoupled, FIFO input handling
     let input_queue = InputQueue::new(ws.clone());
 
-    // Handle keyboard input - enqueue only, never render
+    // Handle keyboard input - attach to wrapper, not canvas
     let input_queue_key = input_queue.clone();
     let keydown = Closure::wrap(Box::new(move |e: KeyboardEvent| {
         let key = e.key();
@@ -230,39 +281,97 @@ pub fn start() -> Result<(), JsValue> {
             _=> if key.len() == 1 { key.as_str() } else { return },
         };
         
+        // Debug: log key press to console
+        web_sys::console::log_1(&format!("KEY: {}", nvim_key).into());
+        
         // Enqueue input (flushed immediately, FIFO order)
-        // Never blocks on render, never waits for redraw
         input_queue_key.send_key(nvim_key);
         
         e.prevent_default();
     }) as Box<dyn FnMut(_)>);
     
-    document.add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())?;
+    // Attach keydown to WRAPPER (not canvas) for reliable focus handling
+    editor_root.add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())?;
     keydown.forget();
 
-    // B1: Focus/blur detection for focus signaling
-    // Make canvas focusable
-    canvas.set_attribute("tabindex", "0")?;
-    canvas.focus()?;
+    // Phase 9.3: Mouse support - click to position cursor
+    let input_queue_mouse = input_queue.clone();
+    let renderer_mouse = renderer.clone();
+    let canvas_mouse = canvas.clone();
+    let editor_root_click = editor_root.clone();
+    let onmousedown = Closure::wrap(Box::new(move |e: web_sys::MouseEvent| {
+        // Focus the editor
+        let _ = editor_root_click.focus();
+        
+        // Get click position relative to canvas (cast to Element for getBoundingClientRect)
+        let canvas_element: &web_sys::Element = canvas_mouse.as_ref();
+        let rect = canvas_element.get_bounding_client_rect();
+        let x = e.client_x() as f64 - rect.left();
+        let y = e.client_y() as f64 - rect.top();
+        
+        // Convert to grid cell coordinates
+        let (cell_w, cell_h) = renderer_mouse.cell_size();
+        let col = (x / cell_w).floor() as i32;
+        let row = (y / cell_h).floor() as i32;
+        
+        web_sys::console::log_1(&format!("MOUSE: ({},{}) -> cell ({},{})", x, y, col, row).into());
+        
+        // Send nvim_input_mouse: <button>, <action>, <mods>, <grid>, <row>, <col>
+        // For left click: button="left", action="press"
+        let mouse_input = format!("<LeftMouse><{},{}>", col, row);
+        input_queue_mouse.send_key(&mouse_input);
+    }) as Box<dyn FnMut(_)>);
+    
+    editor_root.add_event_listener_with_callback("mousedown", onmousedown.as_ref().unchecked_ref())?;
+    onmousedown.forget();
 
+    // Phase 9.3: Scroll wheel support
+    let input_queue_scroll = input_queue.clone();
+    let onwheel = Closure::wrap(Box::new(move |e: web_sys::WheelEvent| {
+        e.prevent_default();
+        
+        let delta_y = e.delta_y();
+        let key = if delta_y > 0.0 {
+            "<ScrollWheelDown>"
+        } else if delta_y < 0.0 {
+            "<ScrollWheelUp>"
+        } else {
+            return;
+        };
+        
+        web_sys::console::log_1(&format!("SCROLL: {}", key).into());
+        input_queue_scroll.send_key(key);
+    }) as Box<dyn FnMut(_)>);
+    
+    editor_root.add_event_listener_with_callback("wheel", onwheel.as_ref().unchecked_ref())?;
+    onwheel.forget();
+
+
+    // Focus the wrapper on startup
+    editor_root.focus()?;
+    web_sys::console::log_1(&"EDITOR FOCUS INITIALIZED".into());
+
+    // Focus/blur detection for visual feedback
     let grid_focus = grid.clone();
     let render_state_focus = render_state.clone();
     let onfocus = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
+        web_sys::console::log_1(&"FOCUS EVENT".into());
         grid_focus.borrow_mut().is_focused = true;
-        render_state_focus.render_now();  // Immediate for focus feedback
+        render_state_focus.render_now();
     }) as Box<dyn FnMut(_)>);
     
-    canvas.add_event_listener_with_callback("focus", onfocus.as_ref().unchecked_ref())?;
+    editor_root.add_event_listener_with_callback("focus", onfocus.as_ref().unchecked_ref())?;
     onfocus.forget();
 
     let grid_blur = grid.clone();
     let render_state_blur = render_state.clone();
     let onblur = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
+        web_sys::console::log_1(&"BLUR EVENT".into());
         grid_blur.borrow_mut().is_focused = false;
-        render_state_blur.render_now();  // Immediate for focus feedback
+        render_state_blur.render_now();
     }) as Box<dyn FnMut(_)>);
     
-    canvas.add_event_listener_with_callback("blur", onblur.as_ref().unchecked_ref())?;
+    editor_root.add_event_listener_with_callback("blur", onblur.as_ref().unchecked_ref())?;
     onblur.forget();
 
     Ok(())
@@ -281,71 +390,89 @@ fn apply_redraw(grid: &mut Grid, highlights: &mut HighlightMap, msg: &rmpv::Valu
                         if let rmpv::Value::String(name) = &ev[0] {
                             match name.as_str() {
                                 Some("hl_attr_define") => {
-                                    // hl_attr_define: ["hl_attr_define", id, rgb_attr, ...]
-                                    // rgb_attr is a map with fg, bg, bold, italic, underline
-                                    if ev.len() >= 3 {
-                                        if let rmpv::Value::Integer(id) = &ev[1] {
-                                            let hl_id = id.as_u64().unwrap_or(0) as u32;
-                                            let attr = parse_hl_attr(&ev[2]);
-                                            highlights.define(hl_id, attr);
+                                    // Batched: ["hl_attr_define", [id, rgb_attr, ...], [id, rgb_attr, ...], ...]
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 2 {
+                                                if let rmpv::Value::Integer(id) = &args[0] {
+                                                    let hl_id = id.as_u64().unwrap_or(0) as u32;
+                                                    let attr = parse_hl_attr(&args[1]);
+                                                    highlights.define(hl_id, attr);
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 Some("grid_line") => {
-                                    // grid_line: ["grid_line", grid, row, col, cells]
-                                    // Each cell: [text, hl_id?, repeat?]
-                                    // ev[0]=name, ev[1]=grid, ev[2]=row, ev[3]=col_start, ev[4]=cells
-                                    if ev.len() >= 5 {
-                                        if let (rmpv::Value::Integer(row), rmpv::Value::Integer(col_start), rmpv::Value::Array(cells)) 
-                                            = (&ev[2], &ev[3], &ev[4]) {
-                                            let row = row.as_u64().unwrap_or(0) as usize;
-                                            let mut col = col_start.as_u64().unwrap_or(0) as usize;
-                                            
-                                            for cell in cells {
-                                                if let rmpv::Value::Array(cell_data) = cell {
-                                                    if cell_data.is_empty() { continue; }
+                                    // Neovim batched event format:
+                                    // ["grid_line", [grid, row, col, cells], [grid, row, col, cells], ...]
+                                    // Each ev[1..] is a separate call with [grid, row, col_start, cells]
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 4 {
+                                                if let (
+                                                    rmpv::Value::Integer(_grid_id),
+                                                    rmpv::Value::Integer(row),
+                                                    rmpv::Value::Integer(col_start),
+                                                    rmpv::Value::Array(cells)
+                                                ) = (&args[0], &args[1], &args[2], &args[3]) {
+                                                    let row = row.as_u64().unwrap_or(0) as usize;
+                                                    let mut col = col_start.as_u64().unwrap_or(0) as usize;
+                                                    let mut last_hl_id: Option<u32> = None;
                                                     
-                                                    // Extract text (first element)
-                                                    let text = if let rmpv::Value::String(s) = &cell_data[0] {
-                                                        s.as_str().unwrap_or("")
-                                                    } else {
-                                                        ""
-                                                    };
-                                                    
-                                                    // Extract hl_id (second element, optional)
-                                                    let hl_id = if cell_data.len() >= 2 {
-                                                        if let rmpv::Value::Integer(h) = &cell_data[1] {
-                                                            Some(h.as_u64().unwrap_or(0) as u32)
-                                                        } else {
-                                                            None
-                                                        }
-                                                    } else {
-                                                        None
-                                                    };
-                                                    
-                                                    // Extract repeat count (third element, defaults to 1)
-                                                    let repeat = if cell_data.len() >= 3 {
-                                                        if let rmpv::Value::Integer(r) = &cell_data[2] {
-                                                            r.as_u64().unwrap_or(1) as usize
-                                                        } else {
-                                                            1
-                                                        }
-                                                    } else {
-                                                        1
-                                                    };
-                                                    
-                                                    // Handle empty string as space (Neovim convention)
-                                                    let ch = if text.is_empty() {
-                                                        ' '
-                                                    } else {
-                                                        text.chars().next().unwrap_or(' ')
-                                                    };
-                                                    
-                                                    // Repeat character for repeat count (hl_id applies to all)
-                                                    for _ in 0..repeat {
-                                                        if col < grid.cols {
-                                                            grid.set_with_hl(row, col, ch, hl_id);
-                                                            col += 1;
+                                                    for cell in cells {
+                                                        if let rmpv::Value::Array(cell_data) = cell {
+                                                            if cell_data.is_empty() { continue; }
+                                                            
+                                                            // Extract text (first element)
+                                                            let text = if let rmpv::Value::String(s) = &cell_data[0] {
+                                                                s.as_str().unwrap_or("")
+                                                            } else {
+                                                                ""
+                                                            };
+                                                            
+                                                            // Extract hl_id (second element, optional)
+                                                            // If not present, use last_hl_id (sticky highlight)
+                                                            let hl_id = if cell_data.len() >= 2 {
+                                                                if let rmpv::Value::Integer(h) = &cell_data[1] {
+                                                                    let id = Some(h.as_u64().unwrap_or(0) as u32);
+                                                                    last_hl_id = id;
+                                                                    id
+                                                                } else {
+                                                                    last_hl_id
+                                                                }
+                                                            } else {
+                                                                last_hl_id
+                                                            };
+                                                            
+                                                            // Extract repeat count (third element, defaults to 1)
+                                                            let repeat = if cell_data.len() >= 3 {
+                                                                if let rmpv::Value::Integer(r) = &cell_data[2] {
+                                                                    r.as_u64().unwrap_or(1) as usize
+                                                                } else {
+                                                                    1
+                                                                }
+                                                            } else {
+                                                                1
+                                                            };
+                                                            
+                                                            // Handle empty string as space (Neovim convention)
+                                                            let ch = if text.is_empty() {
+                                                                ' '
+                                                            } else {
+                                                                text.chars().next().unwrap_or(' ')
+                                                            };
+                                                            
+                                                            // Repeat character for repeat count (hl_id applies to all)
+                                                            for _ in 0..repeat {
+                                                                if col < grid.cols {
+                                                                    grid.set_with_hl(row, col, ch, hl_id);
+                                                                    if ch != ' ' {
+                                                                        web_sys::console::log_1(&format!("CELL({},{})='{}'", row, col, ch).into());
+                                                                    }
+                                                                    col += 1;
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -354,28 +481,47 @@ fn apply_redraw(grid: &mut Grid, highlights: &mut HighlightMap, msg: &rmpv::Valu
                                     }
                                 }
                                 Some("grid_cursor_goto") => {
-                                    // grid_cursor_goto: ["grid_cursor_goto", grid, row, col]
-                                    // ev[0]=name, ev[1]=grid, ev[2]=row, ev[3]=col
-                                    if ev.len() >= 4 {
-                                        if let (rmpv::Value::Integer(row), rmpv::Value::Integer(col)) = (&ev[2], &ev[3]) {
-                                            grid.cursor_row = row.as_u64().unwrap_or(0) as usize;
-                                            grid.cursor_col = col.as_u64().unwrap_or(0) as usize;
+                                    // Batched: ["grid_cursor_goto", [grid, row, col], ...]
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 3 {
+                                                if let (
+                                                    rmpv::Value::Integer(_grid),
+                                                    rmpv::Value::Integer(row),
+                                                    rmpv::Value::Integer(col)
+                                                ) = (&args[0], &args[1], &args[2]) {
+                                                    grid.cursor_row = row.as_u64().unwrap_or(0) as usize;
+                                                    grid.cursor_col = col.as_u64().unwrap_or(0) as usize;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 Some("grid_clear") => {
-                                    // Clear grid
-                                    for cell in &mut grid.cells {
-                                        cell.ch = ' ';
+                                    // Batched: ["grid_clear", [grid], ...]
+                                    // For now, just clear on any call
+                                    if ev.len() > 1 {
+                                        for cell in &mut grid.cells {
+                                            cell.ch = ' ';
+                                            cell.hl_id = None;
+                                        }
                                     }
                                 }
                                 Some("grid_resize") => {
-                                    // grid_resize: ["grid_resize", grid_id, width, height]
-                                    if ev.len() >= 4 {
-                                        if let (rmpv::Value::Integer(width), rmpv::Value::Integer(height)) = (&ev[2], &ev[3]) {
-                                            let new_cols = width.as_u64().unwrap_or(80) as usize;
-                                            let new_rows = height.as_u64().unwrap_or(24) as usize;
-                                            grid.resize(new_rows, new_cols);
+                                    // Batched: ["grid_resize", [grid, width, height], ...]
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 3 {
+                                                if let (
+                                                    rmpv::Value::Integer(_grid),
+                                                    rmpv::Value::Integer(width),
+                                                    rmpv::Value::Integer(height)
+                                                ) = (&args[0], &args[1], &args[2]) {
+                                                    let new_cols = width.as_u64().unwrap_or(80) as usize;
+                                                    let new_rows = height.as_u64().unwrap_or(24) as usize;
+                                                    grid.resize(new_rows, new_cols);
+                                                }
+                                            }
                                         }
                                     }
                                 }

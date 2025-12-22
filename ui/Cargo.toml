@@ -16,8 +16,12 @@ rmpv = "1"
 version = "0.3"
 features = [
   "CanvasRenderingContext2d",
+  "CloseEvent",
   "Document",
+  "DomRect",
   "Element",
+  "Event",
+  "HtmlElement",
   "HtmlCanvasElement",
   "Window",
   "WebSocket",
@@ -27,6 +31,8 @@ features = [
   "ErrorEvent",
   "KeyboardEvent",
   "FocusEvent",
+  "MouseEvent",
+  "WheelEvent",
   "EventTarget",
   "console",
   "TextMetrics",
