@@ -10,6 +10,60 @@ mod renderer;
 use grid::Grid;
 use renderer::Renderer;
 
+/// Render state for RAF-based batching
+struct RenderState {
+    grid: Rc<RefCell<Grid>>,
+    renderer: Rc<Renderer>,
+    needs_render: Rc<RefCell<bool>>,
+    raf_scheduled: Rc<RefCell<bool>>,
+}
+
+impl RenderState {
+    fn new(grid: Rc<RefCell<Grid>>, renderer: Rc<Renderer>) -> Rc<Self> {
+        Rc::new(Self {
+            grid,
+            renderer,
+            needs_render: Rc::new(RefCell::new(false)),
+            raf_scheduled: Rc::new(RefCell::new(false)),
+        })
+    }
+
+    /// Mark that a render is needed and schedule RAF if not already scheduled
+    fn request_render(self: &Rc<Self>) {
+        *self.needs_render.borrow_mut() = true;
+        
+        if !*self.raf_scheduled.borrow() {
+            *self.raf_scheduled.borrow_mut() = true;
+            
+            let state = self.clone();
+            let callback = Closure::once(Box::new(move || {
+                state.do_render();
+            }) as Box<dyn FnOnce()>);
+            
+            let _ = window().unwrap().request_animation_frame(
+                callback.as_ref().unchecked_ref()
+            );
+            callback.forget();
+        }
+    }
+
+    /// Execute the actual render (called from RAF)
+    fn do_render(&self) {
+        *self.raf_scheduled.borrow_mut() = false;
+        
+        if *self.needs_render.borrow() {
+            *self.needs_render.borrow_mut() = false;
+            self.renderer.draw(&self.grid.borrow());
+        }
+    }
+
+    /// Force immediate render (for resize, focus changes)
+    fn render_now(&self) {
+        *self.needs_render.borrow_mut() = false;
+        self.renderer.draw(&self.grid.borrow());
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     let document = window().unwrap().document().unwrap();
@@ -33,16 +87,19 @@ pub fn start() -> Result<(), JsValue> {
     // Apply initial HiDPI scaling
     renderer.resize(css_width, css_height);
 
+    // Create render state for batching
+    let render_state = RenderState::new(grid.clone(), renderer.clone());
+
     // Initial render
-    renderer.draw(&grid.borrow());
+    render_state.render_now();
 
     // Connect to WebSocket
     let ws = WebSocket::new("ws://127.0.0.1:9001")?;
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
-    // Handle incoming redraw events
-    let grid_clone = grid.clone();
-    let renderer_clone = renderer.clone();
+    // Handle incoming redraw events with batching
+    let grid_msg = grid.clone();
+    let render_state_msg = render_state.clone();
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
         if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
             let array = js_sys::Uint8Array::new(&abuf);
@@ -51,13 +108,11 @@ pub fn start() -> Result<(), JsValue> {
             // Decode msgpack redraw event
             let mut cursor = std::io::Cursor::new(bytes);
             if let Ok(msg) = rmpv::decode::read_value(&mut cursor) {
-                // Log raw msgpack structure
-                web_sys::console::log_1(&format!("RAW REDRAW: {:?}", msg).into());
+                // Apply redraw to grid model (fast, no canvas work)
+                apply_redraw(&mut grid_msg.borrow_mut(), &msg);
                 
-                // Apply redraw to grid
-                apply_redraw(&mut grid_clone.borrow_mut(), &msg);
-                // Redraw canvas
-                renderer_clone.draw(&grid_clone.borrow());
+                // Schedule render via RAF (batched, at most once per frame)
+                render_state_msg.request_render();
             }
         }
     }) as Box<dyn FnMut(_)>);
@@ -68,6 +123,7 @@ pub fn start() -> Result<(), JsValue> {
     // D1.1: ResizeObserver for window resize handling
     let grid_resize = grid.clone();
     let renderer_resize = renderer.clone();
+    let render_state_resize = render_state.clone();
     let ws_resize = ws.clone();
     let resize_callback = Closure::wrap(Box::new(move |entries: js_sys::Array| {
         for i in 0..entries.length() {
@@ -93,8 +149,8 @@ pub fn start() -> Result<(), JsValue> {
                     let _ = ws_resize.send_with_u8_array(&bytes);
                 }
 
-                // D1.3: Full redraw
-                renderer_resize.draw(&grid_resize.borrow());
+                // D1.3: Immediate full redraw (resize is special)
+                render_state_resize.render_now();
             }
         }
     }) as Box<dyn FnMut(_)>);
@@ -144,20 +200,20 @@ pub fn start() -> Result<(), JsValue> {
     canvas.focus()?;
 
     let grid_focus = grid.clone();
-    let renderer_focus = renderer.clone();
+    let render_state_focus = render_state.clone();
     let onfocus = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
         grid_focus.borrow_mut().is_focused = true;
-        renderer_focus.draw(&grid_focus.borrow());
+        render_state_focus.render_now();  // Immediate for focus feedback
     }) as Box<dyn FnMut(_)>);
     
     canvas.add_event_listener_with_callback("focus", onfocus.as_ref().unchecked_ref())?;
     onfocus.forget();
 
     let grid_blur = grid.clone();
-    let renderer_blur = renderer.clone();
+    let render_state_blur = render_state.clone();
     let onblur = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
         grid_blur.borrow_mut().is_focused = false;
-        renderer_blur.draw(&grid_blur.borrow());
+        render_state_blur.render_now();  // Immediate for focus feedback
     }) as Box<dyn FnMut(_)>);
     
     canvas.add_event_listener_with_callback("blur", onblur.as_ref().unchecked_ref())?;
