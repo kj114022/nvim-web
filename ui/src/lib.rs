@@ -3,12 +3,56 @@ use wasm_bindgen::JsCast;
 use web_sys::{window, HtmlCanvasElement, WebSocket, MessageEvent, KeyboardEvent, ResizeObserver, ResizeObserverEntry};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 mod grid;
 mod renderer;
 
 use grid::Grid;
 use renderer::Renderer;
+
+/// Input queue for FIFO input handling - decoupled from rendering
+struct InputQueue {
+    queue: RefCell<VecDeque<Vec<u8>>>,
+    ws: WebSocket,
+}
+
+impl InputQueue {
+    fn new(ws: WebSocket) -> Rc<Self> {
+        Rc::new(Self {
+            queue: RefCell::new(VecDeque::new()),
+            ws,
+        })
+    }
+
+    /// Enqueue an input event (already encoded as msgpack bytes)
+    fn enqueue(&self, bytes: Vec<u8>) {
+        self.queue.borrow_mut().push_back(bytes);
+        self.flush();
+    }
+
+    /// Flush all queued input to WebSocket immediately
+    /// Never waits for render, preserves FIFO order
+    fn flush(&self) {
+        let mut queue = self.queue.borrow_mut();
+        while let Some(bytes) = queue.pop_front() {
+            let _ = self.ws.send_with_u8_array(&bytes);
+        }
+    }
+
+    /// Send a key input (convenience method)
+    fn send_key(&self, nvim_key: &str) {
+        let msg = rmpv::Value::Array(vec![
+            rmpv::Value::String("input".into()),
+            rmpv::Value::String(nvim_key.into()),
+        ]);
+        
+        let mut bytes = Vec::new();
+        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+            self.enqueue(bytes);
+        }
+    }
+}
 
 /// Render state for RAF-based batching
 struct RenderState {
@@ -159,8 +203,11 @@ pub fn start() -> Result<(), JsValue> {
     observer.observe(&canvas);
     resize_callback.forget();
 
-    // Handle keyboard input
-    let ws_clone = ws.clone();
+    // Phase 9.1.2: Input queue for decoupled, FIFO input handling
+    let input_queue = InputQueue::new(ws.clone());
+
+    // Handle keyboard input - enqueue only, never render
+    let input_queue_key = input_queue.clone();
     let keydown = Closure::wrap(Box::new(move |e: KeyboardEvent| {
         let key = e.key();
         
@@ -177,16 +224,9 @@ pub fn start() -> Result<(), JsValue> {
             _=> if key.len() == 1 { key.as_str() } else { return },
         };
         
-        // Send input message as msgpack
-        let msg = rmpv::Value::Array(vec![
-            rmpv::Value::String("input".into()),
-            rmpv::Value::String(nvim_key.into()),
-        ]);
-        
-        let mut bytes = Vec::new();
-        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
-            let _ = ws_clone.send_with_u8_array(&bytes);
-        }
+        // Enqueue input (flushed immediately, FIFO order)
+        // Never blocks on render, never waits for redraw
+        input_queue_key.send_key(nvim_key);
         
         e.prevent_default();
     }) as Box<dyn FnMut(_)>);
