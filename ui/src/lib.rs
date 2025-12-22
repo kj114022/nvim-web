@@ -6,9 +6,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 mod grid;
+mod highlight;
 mod renderer;
 
 use grid::Grid;
+use highlight::{HighlightMap, HighlightAttr};
 use renderer::Renderer;
 
 /// Input queue for FIFO input handling - decoupled from rendering
@@ -141,9 +143,13 @@ pub fn start() -> Result<(), JsValue> {
     let ws = WebSocket::new("ws://127.0.0.1:9001")?;
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
+    // Phase 9.2.1: Highlight storage
+    let highlights = Rc::new(RefCell::new(HighlightMap::new()));
+
     // Handle incoming redraw events with batching
     let grid_msg = grid.clone();
     let render_state_msg = render_state.clone();
+    let highlights_msg = highlights.clone();
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
         if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
             let array = js_sys::Uint8Array::new(&abuf);
@@ -153,7 +159,7 @@ pub fn start() -> Result<(), JsValue> {
             let mut cursor = std::io::Cursor::new(bytes);
             if let Ok(msg) = rmpv::decode::read_value(&mut cursor) {
                 // Apply redraw to grid model (fast, no canvas work)
-                apply_redraw(&mut grid_msg.borrow_mut(), &msg);
+                apply_redraw(&mut grid_msg.borrow_mut(), &mut highlights_msg.borrow_mut(), &msg);
                 
                 // Schedule render via RAF (batched, at most once per frame)
                 render_state_msg.request_render();
@@ -262,8 +268,8 @@ pub fn start() -> Result<(), JsValue> {
     Ok(())
 }
 
-// Apply redraw events to grid - minimal implementation for Phase 4
-fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
+// Apply redraw events to grid
+fn apply_redraw(grid: &mut Grid, highlights: &mut HighlightMap, msg: &rmpv::Value) {
     if let rmpv::Value::Array(arr) = msg {
         // Message format: [2, "redraw", [[event, ...args]...]]
         if arr.len() >= 3 {
@@ -274,6 +280,17 @@ fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
                         
                         if let rmpv::Value::String(name) = &ev[0] {
                             match name.as_str() {
+                                Some("hl_attr_define") => {
+                                    // hl_attr_define: ["hl_attr_define", id, rgb_attr, ...]
+                                    // rgb_attr is a map with fg, bg, bold, italic, underline
+                                    if ev.len() >= 3 {
+                                        if let rmpv::Value::Integer(id) = &ev[1] {
+                                            let hl_id = id.as_u64().unwrap_or(0) as u32;
+                                            let attr = parse_hl_attr(&ev[2]);
+                                            highlights.define(hl_id, attr);
+                                        }
+                                    }
+                                }
                                 Some("grid_line") => {
                                     // grid_line: ["grid_line", grid, row, col, cells]
                                     // Each cell: [text, hl_id?, repeat?]
@@ -295,6 +312,17 @@ fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
                                                         ""
                                                     };
                                                     
+                                                    // Extract hl_id (second element, optional)
+                                                    let hl_id = if cell_data.len() >= 2 {
+                                                        if let rmpv::Value::Integer(h) = &cell_data[1] {
+                                                            Some(h.as_u64().unwrap_or(0) as u32)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    };
+                                                    
                                                     // Extract repeat count (third element, defaults to 1)
                                                     let repeat = if cell_data.len() >= 3 {
                                                         if let rmpv::Value::Integer(r) = &cell_data[2] {
@@ -313,10 +341,10 @@ fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
                                                         text.chars().next().unwrap_or(' ')
                                                     };
                                                     
-                                                    // Repeat character for repeat count
+                                                    // Repeat character for repeat count (hl_id applies to all)
                                                     for _ in 0..repeat {
                                                         if col < grid.cols {
-                                                            grid.set(row, col, ch);
+                                                            grid.set_with_hl(row, col, ch, hl_id);
                                                             col += 1;
                                                         }
                                                     }
@@ -360,3 +388,40 @@ fn apply_redraw(grid: &mut Grid, msg: &rmpv::Value) {
         }
     }
 }
+
+/// Parse highlight attributes from msgpack map
+fn parse_hl_attr(value: &rmpv::Value) -> HighlightAttr {
+    let mut attr = HighlightAttr::default();
+    
+    if let rmpv::Value::Map(map) = value {
+        for (key, val) in map {
+            if let rmpv::Value::String(k) = key {
+                match k.as_str() {
+                    Some("foreground") => {
+                        if let rmpv::Value::Integer(i) = val {
+                            attr.fg = Some(i.as_u64().unwrap_or(0) as u32);
+                        }
+                    }
+                    Some("background") => {
+                        if let rmpv::Value::Integer(i) = val {
+                            attr.bg = Some(i.as_u64().unwrap_or(0) as u32);
+                        }
+                    }
+                    Some("bold") => {
+                        attr.bold = matches!(val, rmpv::Value::Boolean(true));
+                    }
+                    Some("italic") => {
+                        attr.italic = matches!(val, rmpv::Value::Boolean(true));
+                    }
+                    Some("underline") => {
+                        attr.underline = matches!(val, rmpv::Value::Boolean(true));
+                    }
+                    _ => {} // Ignore other attributes for now
+                }
+            }
+        }
+    }
+    
+    attr
+}
+

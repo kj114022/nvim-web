@@ -1,7 +1,24 @@
 #[derive(Clone)]
 pub struct Cell {
     pub ch: char,
+    pub hl_id: Option<u32>,  // Highlight ID from grid_line
     pub selected: bool,
+}
+
+impl Cell {
+    pub fn new() -> Self {
+        Self {
+            ch: ' ',
+            hl_id: None,
+            selected: false,
+        }
+    }
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone)]
@@ -19,16 +36,27 @@ impl Grid {
         Self {
             rows,
             cols,
-            cells: vec![Cell { ch: ' ', selected: false }; rows * cols],
+            cells: vec![Cell::new(); rows * cols],
             cursor_row: 0,
             cursor_col: 0,
             is_focused: true,
         }
     }
 
+    /// Set cell character (legacy, used by existing code)
+    #[allow(dead_code)]
     pub fn set(&mut self, row: usize, col: usize, ch: char) {
         if row < self.rows && col < self.cols {
             self.cells[row * self.cols + col].ch = ch;
+        }
+    }
+
+    /// Set cell with highlight ID
+    pub fn set_with_hl(&mut self, row: usize, col: usize, ch: char, hl_id: Option<u32>) {
+        if row < self.rows && col < self.cols {
+            let cell = &mut self.cells[row * self.cols + col];
+            cell.ch = ch;
+            cell.hl_id = hl_id;
         }
     }
 
@@ -54,7 +82,7 @@ impl Grid {
             return;
         }
 
-        let mut new_cells = vec![Cell { ch: ' ', selected: false }; new_rows * new_cols];
+        let mut new_cells = vec![Cell::new(); new_rows * new_cols];
 
         // Copy existing content
         let copy_rows = self.rows.min(new_rows);
@@ -74,5 +102,3 @@ impl Grid {
         self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
     }
 }
-
-
