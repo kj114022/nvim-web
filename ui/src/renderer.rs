@@ -66,9 +66,10 @@ impl Renderer {
             }
         }
 
-        // Draw cursor in red for visibility
-        self.ctx.set_stroke_style(&"red".into());
-        self.ctx.stroke_rect(
+        // Draw cursor - filled rectangle with inverted color for visibility
+        // On white bg -> black cursor, on dark bg -> white cursor
+        self.ctx.set_fill_style(&"#000000".into());
+        self.ctx.fill_rect(
             (grid.cursor_col as f64) * self.cell_w,
             (grid.cursor_row as f64) * self.cell_h,
             self.cell_w,
