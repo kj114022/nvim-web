@@ -1,8 +1,12 @@
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
 use wasm_bindgen::JsCast;
 use std::rc::Rc;
-use std::cell::RefCell;
 use crate::grid::Grid;
+
+// Selection color: Windows-style blue with alpha
+const SELECTION_COLOR: &str = "rgba(0, 120, 215, 0.35)";
+// Focus overlay: subtle dim
+const FOCUS_LOST_OVERLAY: &str = "rgba(0, 0, 0, 0.08)";
 
 #[derive(Clone)]
 pub struct Renderer {
@@ -87,18 +91,29 @@ impl Renderer {
         // D1.3: Clear entire canvas before redraw
         self.ctx.clear_rect(0.0, 0.0, css_width, css_height);
 
-        // Set background color
+        // Step 1: Background (normal)
         self.ctx.set_fill_style(&"white".into());
         self.ctx.fill_rect(0.0, 0.0, css_width, css_height);
 
-        // Set text color to black
-        self.ctx.set_fill_style(&"black".into());
-
-        // Draw grid cells
+        // Step 2: Selection background (before text)
+        self.ctx.set_fill_style(&SELECTION_COLOR.into());
         for row in 0..grid.rows {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
-                if cell.ch != ' ' {  // Only draw non-space characters
+                if cell.selected {
+                    let x = (col as f64) * self.cell_w;
+                    let y = (row as f64) * self.cell_h;
+                    self.ctx.fill_rect(x, y, self.cell_w, self.cell_h);
+                }
+            }
+        }
+
+        // Step 3: Text
+        self.ctx.set_fill_style(&"black".into());
+        for row in 0..grid.rows {
+            for col in 0..grid.cols {
+                let cell = &grid.cells[row * grid.cols + col];
+                if cell.ch != ' ' {
                     // Baseline-correct: y = row * cell_h + ascent
                     self.ctx.fill_text(
                         &cell.ch.to_string(),
@@ -109,8 +124,7 @@ impl Renderer {
             }
         }
 
-        // Draw cursor - filled rectangle with inverted color for visibility
-        // On white bg -> black cursor, on dark bg -> white cursor
+        // Step 4: Cursor (on top of everything except focus overlay)
         self.ctx.set_fill_style(&"#000000".into());
         self.ctx.fill_rect(
             (grid.cursor_col as f64) * self.cell_w,
@@ -118,5 +132,11 @@ impl Renderer {
             self.cell_w,
             self.cell_h,
         );
+
+        // Step 5: Focus overlay (after all drawing, if unfocused)
+        if !grid.is_focused {
+            self.ctx.set_fill_style(&FOCUS_LOST_OVERLAY.into());
+            self.ctx.fill_rect(0.0, 0.0, css_width, css_height);
+        }
     }
 }

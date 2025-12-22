@@ -1,6 +1,7 @@
 #[derive(Clone)]
 pub struct Cell {
     pub ch: char,
+    pub selected: bool,
 }
 
 #[derive(Clone)]
@@ -10,6 +11,7 @@ pub struct Grid {
     pub cells: Vec<Cell>,
     pub cursor_row: usize,
     pub cursor_col: usize,
+    pub is_focused: bool,
 }
 
 impl Grid {
@@ -17,9 +19,10 @@ impl Grid {
         Self {
             rows,
             cols,
-            cells: vec![Cell { ch: ' ' }; rows * cols],
+            cells: vec![Cell { ch: ' ', selected: false }; rows * cols],
             cursor_row: 0,
             cursor_col: 0,
+            is_focused: true,
         }
     }
 
@@ -29,13 +32,27 @@ impl Grid {
         }
     }
 
+    /// Clear all selection
+    pub fn clear_selection(&mut self) {
+        for cell in &mut self.cells {
+            cell.selected = false;
+        }
+    }
+
+    /// Set selection for a cell
+    pub fn set_selected(&mut self, row: usize, col: usize, selected: bool) {
+        if row < self.rows && col < self.cols {
+            self.cells[row * self.cols + col].selected = selected;
+        }
+    }
+
     /// Resize grid, preserving content where possible
     pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
         if new_rows == self.rows && new_cols == self.cols {
             return;
         }
 
-        let mut new_cells = vec![Cell { ch: ' ' }; new_rows * new_cols];
+        let mut new_cells = vec![Cell { ch: ' ', selected: false }; new_rows * new_cols];
 
         // Copy existing content
         let copy_rows = self.rows.min(new_rows);
@@ -55,4 +72,5 @@ impl Grid {
         self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
     }
 }
+
 

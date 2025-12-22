@@ -26,6 +26,7 @@ features = [
   "Blob",
   "ErrorEvent",
   "KeyboardEvent",
+  "FocusEvent",
   "EventTarget",
   "console",
   "TextMetrics",
@@ -33,5 +34,6 @@ features = [
   "ResizeObserverEntry",
   "DomRectReadOnly",
 ]
+
 
 

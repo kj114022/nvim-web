@@ -138,6 +138,31 @@ pub fn start() -> Result<(), JsValue> {
     document.add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())?;
     keydown.forget();
 
+    // B1: Focus/blur detection for focus signaling
+    // Make canvas focusable
+    canvas.set_attribute("tabindex", "0")?;
+    canvas.focus()?;
+
+    let grid_focus = grid.clone();
+    let renderer_focus = renderer.clone();
+    let onfocus = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
+        grid_focus.borrow_mut().is_focused = true;
+        renderer_focus.draw(&grid_focus.borrow());
+    }) as Box<dyn FnMut(_)>);
+    
+    canvas.add_event_listener_with_callback("focus", onfocus.as_ref().unchecked_ref())?;
+    onfocus.forget();
+
+    let grid_blur = grid.clone();
+    let renderer_blur = renderer.clone();
+    let onblur = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
+        grid_blur.borrow_mut().is_focused = false;
+        renderer_blur.draw(&grid_blur.borrow());
+    }) as Box<dyn FnMut(_)>);
+    
+    canvas.add_event_listener_with_callback("blur", onblur.as_ref().unchecked_ref())?;
+    onblur.forget();
+
     Ok(())
 }
 
