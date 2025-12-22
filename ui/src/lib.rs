@@ -166,9 +166,24 @@ pub fn start() -> Result<(), JsValue> {
         &ws.clone().into(),
     );
 
-    // WS lifecycle: onopen
+    // WS lifecycle: onopen - send initial resize with actual viewport size
+    let ws_open = ws.clone();
+    let initial_rows_send = initial_rows.max(24);
+    let initial_cols_send = initial_cols.max(80);
     let onopen = Closure::wrap(Box::new(move |_: web_sys::Event| {
         web_sys::console::log_1(&"WS OPEN".into());
+        
+        // Send initial resize to tell Neovim the actual browser viewport size
+        let msg = rmpv::Value::Array(vec![
+            rmpv::Value::String("resize".into()),
+            rmpv::Value::Integer((initial_cols_send as i64).into()),
+            rmpv::Value::Integer((initial_rows_send as i64).into()),
+        ]);
+        let mut bytes = Vec::new();
+        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+            let _ = ws_open.send_with_u8_array(&bytes);
+            web_sys::console::log_1(&format!("Sent initial resize: {}x{}", initial_cols_send, initial_rows_send).into());
+        }
     }) as Box<dyn FnMut(_)>);
     ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
     onopen.forget();
