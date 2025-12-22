@@ -1,5 +1,5 @@
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::grid::Grid;
@@ -106,8 +106,8 @@ impl Renderer {
 
     #[allow(deprecated)]  // web-sys set_fill_style deprecation is overzealous
     pub fn draw(&self, grid: &Grid, highlights: &HighlightMap) {
-        let grid_width = (grid.cols as f64) * self.cell_w;
-        let grid_height = (grid.rows as f64) * self.cell_h;
+        let _grid_width = (grid.cols as f64) * self.cell_w;
+        let _grid_height = (grid.rows as f64) * self.cell_h;
         
         // Get actual canvas dimensions (CSS pixels, accounting for transform)
         let canvas_width = self.canvas.width() as f64 / self.dpr;
@@ -186,12 +186,39 @@ impl Renderer {
                         DEFAULT_FG.to_string()
                     };
                     
-                    self.ctx.set_fill_style(&fg_css.into());
+                    // Apply text styles (bold/italic)
+                    let bold = hl.map_or(false, |h| h.bold);
+                    let italic = hl.map_or(false, |h| h.italic);
+                    let underline = hl.map_or(false, |h| h.underline);
                     
-                    // Use encode_utf8 with let-bound buffer to avoid String allocation
+                    let font = match (bold, italic) {
+                        (true, true) => "bold italic 14px monospace",
+                        (true, false) => "bold 14px monospace",
+                        (false, true) => "italic 14px monospace",
+                        (false, false) => "14px monospace",
+                    };
+                    self.ctx.set_font(font);
+                    
+                    self.ctx.set_fill_style(&JsValue::from_str(&fg_css));
+                    
+                    // Draw character
                     let mut buf = [0u8; 4];
                     let s = cell.ch.encode_utf8(&mut buf);
                     let _ = self.ctx.fill_text(s, x, y + self.ascent);
+                    
+                    // Draw underline if needed
+                    if underline {
+                        self.ctx.set_stroke_style(&JsValue::from_str(&fg_css));
+                        self.ctx.begin_path();
+                        self.ctx.move_to(x, y + self.ascent + 2.0);
+                        self.ctx.line_to(x + self.cell_w, y + self.ascent + 2.0);
+                        self.ctx.stroke();
+                    }
+                    
+                    // Reset font to default
+                    if bold || italic {
+                        self.ctx.set_font("14px monospace");
+                    }
                 }
             }
         }

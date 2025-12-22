@@ -267,25 +267,59 @@ pub fn start() -> Result<(), JsValue> {
     let input_queue_key = input_queue.clone();
     let keydown = Closure::wrap(Box::new(move |e: KeyboardEvent| {
         let key = e.key();
+        let ctrl = e.ctrl_key() || e.meta_key(); // Cmd on Mac
+        let shift = e.shift_key();
+        let alt = e.alt_key();
         
-        // Map to Neovim key notation
-        let nvim_key = match key.as_str() {
-            "Enter" => "<CR>",
-            "Escape" => "<Esc>",
-            "Backspace" => "<BS>",
-            "Tab" => "<Tab>",
-            "ArrowUp" => "<Up>",
-            "ArrowDown" => "<Down>",
-            "ArrowLeft" => "<Left>",
-            "ArrowRight" => "<Right>",
-            _=> if key.len() == 1 { key.as_str() } else { return },
+        // Build Neovim key notation with modifiers
+        let nvim_key: String = if ctrl || shift || alt {
+            // Handle modifier combinations
+            let mut mods = String::new();
+            if ctrl { mods.push('C'); mods.push('-'); }
+            if shift { mods.push('S'); mods.push('-'); }
+            if alt { mods.push('A'); mods.push('-'); }
+            
+            let base = match key.as_str() {
+                "Enter" => "CR",
+                "Escape" => "Esc",
+                "Backspace" => "BS",
+                "Tab" => "Tab",
+                "ArrowUp" => "Up",
+                "ArrowDown" => "Down",
+                "ArrowLeft" => "Left",
+                "ArrowRight" => "Right",
+                "Delete" => "Del",
+                "Home" => "Home",
+                "End" => "End",
+                "PageUp" => "PageUp",
+                "PageDown" => "PageDown",
+                k if k.len() == 1 => k,
+                _ => return,
+            };
+            format!("<{}{}>", mods, base)
+        } else {
+            // No modifiers - simple key
+            match key.as_str() {
+                "Enter" => "<CR>".to_string(),
+                "Escape" => "<Esc>".to_string(),
+                "Backspace" => "<BS>".to_string(),
+                "Tab" => "<Tab>".to_string(),
+                "ArrowUp" => "<Up>".to_string(),
+                "ArrowDown" => "<Down>".to_string(),
+                "ArrowLeft" => "<Left>".to_string(),
+                "ArrowRight" => "<Right>".to_string(),
+                "Delete" => "<Del>".to_string(),
+                "Home" => "<Home>".to_string(),
+                "End" => "<End>".to_string(),
+                "PageUp" => "<PageUp>".to_string(),
+                "PageDown" => "<PageDown>".to_string(),
+                k if k.len() == 1 => k.to_string(),
+                _ => return,
+            }
         };
         
-        // Debug: log key press to console
-        web_sys::console::log_1(&format!("KEY: {}", nvim_key).into());
-        
-        // Enqueue input (flushed immediately, FIFO order)
-        input_queue_key.send_key(nvim_key);
+        // Send to Neovim
+        input_queue_key.send_key(&nvim_key);
         
         e.prevent_default();
     }) as Box<dyn FnMut(_)>);
