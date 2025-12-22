@@ -8,6 +8,7 @@ pub struct Renderer {
     ctx: Rc<CanvasRenderingContext2d>,
     cell_w: f64,
     cell_h: f64,
+    ascent: f64,
 }
 
 impl Renderer {
@@ -19,12 +20,21 @@ impl Renderer {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
 
+        // Set font and measure metrics ONCE
         ctx.set_font("14px monospace");
+        let metrics = ctx.measure_text("M").unwrap();
+        
+        // Derive cell dimensions from actual font metrics
+        let cell_w = metrics.width();
+        let ascent = metrics.actual_bounding_box_ascent();
+        let descent = metrics.actual_bounding_box_descent();
+        let cell_h = ascent + descent;
 
         Self {
             ctx: Rc::new(ctx),
-            cell_w: 8.0,
-            cell_h: 16.0,
+            cell_w,
+            cell_h,
+            ascent,
         }
     }
 
@@ -46,10 +56,11 @@ impl Renderer {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
                 if cell.ch != ' ' {  // Only draw non-space characters
+                    // Baseline-correct: y = row * cell_h + ascent
                     self.ctx.fill_text(
                         &cell.ch.to_string(),
                         (col as f64) * self.cell_w,
-                        ((row + 1) as f64) * self.cell_h,
+                        (row as f64) * self.cell_h + self.ascent,
                     ).unwrap();
                 }
             }

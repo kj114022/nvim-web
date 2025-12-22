@@ -28,4 +28,6 @@ features = [
   "KeyboardEvent",
   "EventTarget",
   "console",
+  "TextMetrics",
 ]
+

@@ -6,7 +6,6 @@ use std::cell::RefCell;
 
 mod grid;
 mod renderer;
-mod input;
 
 use grid::Grid;
 use renderer::Renderer;
