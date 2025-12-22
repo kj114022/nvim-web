@@ -1,10 +1,12 @@
-# Rust
+# nvim-web - Neovim in the Browser
+# https://github.com/kj114022/nvim-web
+
+# Rust build artifacts
 target/
-Cargo.lock
 **/*.rs.bk
 *.pdb
 
-# WASM
+# WASM build artifacts
 *.wasm
 pkg/
 
@@ -25,3 +27,9 @@ npm-debug.log*
 
 # Dependencies
 node_modules/
+
+# Archive - development notes and research
+archive/
+
+# Temporary files
+/tmp/

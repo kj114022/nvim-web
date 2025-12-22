@@ -1,0 +1,190 @@
+# nvim-web Architecture
+
+## System Overview
+
+nvim-web is a dual-component system that bridges native Neovim to the browser.
+
+```mermaid
+graph TB
+    subgraph "Browser Environment"
+        WASM["nvim-web-ui<br/>(Rust → WASM)"]
+        Canvas["HTML5 Canvas"]
+        DOM["DOM Events<br/>(keyboard, mouse)"]
+        
+        DOM --> WASM
+        WASM --> Canvas
+    end
+    
+    subgraph "Host Environment"
+        WS["WebSocket Server<br/>(port 9001)"]
+        Bridge["RPC Bridge"]
+        Nvim["Neovim Process<br/>(--embed)"]
+        VFS["Virtual FS<br/>(local, browser, ssh)"]
+        
+        WS <--> Bridge
+        Bridge <--> Nvim
+        Bridge --> VFS
+    end
+    
+    WASM <--"WebSocket<br/>MessagePack"--> WS
+```
+
+## Component Details
+
+### Host (nvim-web-host)
+
+```mermaid
+graph LR
+    subgraph "nvim-web-host"
+        main["main.rs"]
+        ws["ws.rs"]
+        rpc["rpc.rs"]
+        nvim["nvim.rs"]
+        vfs["vfs/"]
+        
+        main --> nvim
+        main --> ws
+        ws --> rpc
+        ws --> vfs
+        rpc --> nvim
+    end
+```
+
+| Module | Responsibility |
+|--------|----------------|
+| `main.rs` | Entry point, spawns Neovim and starts WS server |
+| `ws.rs` | WebSocket handling, connection lifecycle, message routing |
+| `rpc.rs` | Neovim RPC protocol (msgpack encoding/decoding) |
+| `nvim.rs` | Neovim process management (`nvim --embed`) |
+| `vfs/` | Virtual filesystem backends (local, browser OPFS, SSH) |
+
+### UI (nvim-web-ui)
+
+```mermaid
+graph LR
+    subgraph "nvim-web-ui"
+        lib["lib.rs"]
+        renderer["renderer.rs"]
+        grid["grid.rs"]
+        highlight["highlight.rs"]
+        
+        lib --> renderer
+        lib --> grid
+        lib --> highlight
+        renderer --> grid
+        renderer --> highlight
+    end
+```
+
+| Module | Responsibility |
+|--------|----------------|
+| `lib.rs` | WASM entry point, WebSocket, event handlers |
+| `renderer.rs` | Canvas 2D rendering, text drawing, cursor |
+| `grid.rs` | Grid state (cells, characters, highlights) |
+| `highlight.rs` | Syntax highlight attribute storage |
+
+## Message Flow
+
+### Startup Sequence
+
+```mermaid
+sequenceDiagram
+    participant H as Host
+    participant N as Neovim
+    participant B as Browser
+
+    H->>N: spawn nvim --embed
+    H->>N: nvim_ui_attach(ext_linegrid)
+    N-->>H: UI attached
+    H->>H: Listen on :9001
+    
+    B->>H: WS Connect
+    H-->>B: Handshake OK
+    H->>N: nvim_ui_try_resize
+    N-->>H: grid_resize, grid_line, etc.
+    H-->>B: Forward redraw events
+    B->>B: Render on canvas
+```
+
+### Input Handling
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant H as Host
+    participant N as Neovim
+
+    B->>B: keydown event
+    B->>B: Convert to Neovim notation
+    B->>H: ["input", "<C-s>"]
+    H->>N: nvim_input("<C-s>")
+    N-->>H: redraw events
+    H-->>B: Updated grid
+```
+
+## Threading Model
+
+```mermaid
+graph TB
+    subgraph "Host Process"
+        Main["Main Thread<br/>(WS send, Nvim stdin)"]
+        Reader["Neovim Reader Thread<br/>(nvim stdout → channel)"]
+        WSReader["WS Reader Thread<br/>(browser → channel)"]
+        
+        Reader --> |"Arc<Mutex<Receiver>>"| Main
+        WSReader --> |"mpsc channel"| Main
+    end
+```
+
+The host uses three threads:
+
+1. **Main Thread**: Sends to WebSocket, writes to Neovim stdin
+2. **Neovim Reader**: Reads from Neovim stdout, sends to shared channel
+3. **WS Reader**: Reads from WebSocket, sends to channel
+
+The Neovim reader thread persists across browser reconnections (key fix for stability).
+
+## Virtual Filesystem
+
+```mermaid
+graph LR
+    subgraph "VFS Backends"
+        Local["LocalFs<br/>(/tmp/nvim-web)"]
+        Browser["BrowserFs<br/>(OPFS)"]
+        SSH["SSH Fs<br/>(on-demand)"]
+    end
+    
+    Manager["VfsManager"] --> Local
+    Manager --> Browser
+    Manager --> SSH
+```
+
+URLs:
+- `vfs://local/path` - Server filesystem
+- `vfs://browser/path` - Browser OPFS storage
+- `vfs://ssh/user@host/path` - Remote via SSH
+
+## Reconnection Architecture
+
+Browser refresh triggers reconnection without losing Neovim state:
+
+```mermaid
+sequenceDiagram
+    participant B1 as Browser (Tab 1)
+    participant H as Host
+    participant B2 as Browser (Refresh)
+
+    B1->>H: Connected
+    H->>H: Bridge running
+    
+    Note over B1: User refreshes
+    B1--xH: Connection closed
+    H->>H: Detect disconnect
+    H->>H: Exit bridge, drain channel
+    
+    B2->>H: New connection
+    H->>H: Force redraw
+    H-->>B2: Full UI state
+```
+
+Key: Neovim reader thread persists, channel shared via `Arc<Mutex<>>`.
