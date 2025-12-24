@@ -272,7 +272,7 @@ fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager:
                             if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
                                 let cols = cols.as_u64().unwrap_or(80);
                                 let rows = rows.as_u64().unwrap_or(24);
-                                crate::rpc::send_resize(nvim_stdin, cols, rows)?;
+                                crate::rpc::send_resize(nvim_stdin, rows, cols)?;
                             }
                         }
                     }
