@@ -144,9 +144,27 @@ pub fn start() -> Result<(), JsValue> {
     // Initial render
     render_state.render_now();
 
-    // Connect to WebSocket with full lifecycle logging
-    web_sys::console::log_1(&"WS CREATING...".into());
-    let ws = match WebSocket::new("ws://127.0.0.1:9001") {
+    // Session management: check localStorage for existing session ID
+    let storage = window().unwrap().local_storage().ok().flatten();
+    let existing_session = storage.as_ref()
+        .and_then(|s| s.get_item("nvim_session_id").ok())
+        .flatten();
+    
+    // Build WebSocket URL with session ID if available
+    let ws_url = match existing_session {
+        Some(ref id) => {
+            web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
+            format!("ws://127.0.0.1:9001?session={}", id)
+        }
+        None => {
+            web_sys::console::log_1(&"SESSION: Creating new session".into());
+            "ws://127.0.0.1:9001?session=new".to_string()
+        }
+    };
+
+    // Connect to WebSocket with session support
+    web_sys::console::log_1(&format!("WS CREATING: {}", ws_url).into());
+    let ws = match WebSocket::new(&ws_url) {
         Ok(ws) => {
             web_sys::console::log_1(&"WS CREATED".into());
             ws
@@ -196,10 +214,18 @@ pub fn start() -> Result<(), JsValue> {
     ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
     onerror.forget();
 
-    // WS lifecycle: onclose
+    // WS lifecycle: onclose - clear session on abnormal close
     let onclose = Closure::wrap(Box::new(move |e: web_sys::CloseEvent| {
         web_sys::console::warn_1(&"WS CLOSE".into());
         web_sys::console::warn_1(&format!("code={}, reason={}", e.code(), e.reason()).into());
+        
+        // If abnormal close (not 1000), clear session ID to force new session on reconnect
+        if e.code() != 1000 && e.code() != 1001 {
+            if let Some(s) = window().unwrap().local_storage().ok().flatten() {
+                let _ = s.remove_item("nvim_session_id");
+                web_sys::console::warn_1(&"SESSION: Cleared due to abnormal disconnect".into());
+            }
+        }
     }) as Box<dyn FnMut(_)>);
     ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
     onclose.forget();
@@ -215,10 +241,31 @@ pub fn start() -> Result<(), JsValue> {
             let array = js_sys::Uint8Array::new(&abuf);
             let bytes = array.to_vec();
             
-            // Decode msgpack redraw event
+            // Decode msgpack message
             let mut cursor = std::io::Cursor::new(bytes);
             if let Ok(msg) = rmpv::decode::read_value(&mut cursor) {
-                // Apply redraw to grid model (fast, no canvas work)
+                // Check if this is a session message: ["session", "<id>"]
+                if let rmpv::Value::Array(ref arr) = msg {
+                    if arr.len() >= 2 {
+                        if let rmpv::Value::String(ref method) = arr[0] {
+                            if method.as_str() == Some("session") {
+                                if let rmpv::Value::String(ref session_id) = arr[1] {
+                                    if let Some(id) = session_id.as_str() {
+                                        web_sys::console::log_1(&format!("SESSION: Received session ID: {}", id).into());
+                                        // Store session ID in localStorage
+                                        if let Ok(Some(storage)) = window().unwrap().local_storage() {
+                                            let _ = storage.set_item("nvim_session_id", id);
+                                            web_sys::console::log_1(&"SESSION: Stored in localStorage".into());
+                                        }
+                                        return; // Session message handled, don't process as redraw
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Not a session message, process as redraw
                 apply_redraw(&mut grid_msg.borrow_mut(), &mut highlights_msg.borrow_mut(), &msg);
                 
                 // Schedule render via RAF (batched, at most once per frame)

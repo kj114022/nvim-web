@@ -1,20 +1,17 @@
-mod nvim;
-mod rpc;
-mod rpc_buffers;
-mod rpc_sync;
-mod ws;
-mod vfs;
-mod vfs_handlers;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use nvim_web_host::session::AsyncSessionManager;
+use nvim_web_host::ws;
 
-fn main() -> anyhow::Result<()> {
-    println!("Starting nvim-web host...");
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    println!("Starting nvim-web host (async mode with nvim-rs)...");
     
-    // Set up Neovim
-    let mut nvim = nvim::Nvim::spawn()?;
+    // Create async session manager
+    let session_manager = Arc::new(RwLock::new(AsyncSessionManager::new()));
     
-    // Start WebSocket server and bridge
-    // VfsManager is now created inside bridge() function
-    ws::serve(&mut nvim)?;
+    // Start async WebSocket server
+    ws::serve_multi_async(session_manager).await?;
     
     Ok(())
 }

@@ -1,13 +1,13 @@
-// Re-export public API for tests
-pub mod nvim;
-pub mod rpc;
-pub mod rpc_sync;
+// nvim-web-host library
+// Async Neovim GUI host using nvim-rs and tokio
+
+// Core async modules
+pub mod session;
+pub mod ws;
+
+// Virtual filesystem layer
 pub mod vfs;
+pub mod vfs_handlers;
 
-// Debug infrastructure
+// Utilities
 pub mod debug;
-
-// Internal modules not exposed
-mod rpc_buffers;
-mod ws;
-mod vfs_handlers;

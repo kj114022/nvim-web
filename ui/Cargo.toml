@@ -23,6 +23,7 @@ features = [
   "Event",
   "HtmlElement",
   "HtmlCanvasElement",
+  "Storage",
   "Window",
   "WebSocket",
   "MessageEvent",

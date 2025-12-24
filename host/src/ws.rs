@@ -1,285 +1,238 @@
-use std::net::{TcpListener, TcpStream};
-use std::io::Write;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
-use tungstenite::{accept, Message, WebSocket};
+//! Async WebSocket server using tokio-tungstenite
+//!
+//! Handles multiple concurrent connections with async session management.
+
+use std::sync::Arc;
+
 use anyhow::Result;
+use futures::{SinkExt, StreamExt};
 use rmpv::Value;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock;
+use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-use crate::nvim::Nvim;
-use crate::vfs::{VfsManager, LocalFs, BrowserFsBackend};
+use crate::session::AsyncSessionManager;
 
-pub fn serve(nvim: &mut Nvim) -> Result<()> {
-    let server = TcpListener::bind("0.0.0.0:9001")?;
-    println!("WebSocket server listening on ws://0.0.0.0:9001");
+/// Parse session ID from WebSocket upgrade request path
+fn parse_session_id_from_path(path: &str) -> Option<String> {
+    if let Some(query_start) = path.find('?') {
+        let query = &path[query_start + 1..];
+        for param in query.split('&') {
+            if let Some(eq_pos) = param.find('=') {
+                let key = &param[..eq_pos];
+                let value = &param[eq_pos + 1..];
+                if key == "session" {
+                    if value == "new" {
+                        return None;
+                    }
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+    None
+}
 
-    // Attach UI ONCE at startup, before accepting any connections
-    println!("Attaching Neovim UI...");
-    let nvim_stdin = nvim.stdin.as_mut().expect("stdin not available");
-    crate::rpc::attach_ui(nvim_stdin)?;
-    println!("Waiting for UI attach response...");
-    let nvim_stdout_ref = nvim.stdout.as_mut().expect("stdout not available");
-    let _response = crate::rpc::read_message(nvim_stdout_ref)?;
-    println!("UI attached successfully, ready for connections");
+/// Main async WebSocket server
+pub async fn serve_multi_async(session_manager: Arc<RwLock<AsyncSessionManager>>) -> Result<()> {
+    let listener = TcpListener::bind("0.0.0.0:9001").await?;
+    println!("WebSocket server listening on ws://0.0.0.0:9001 (async mode)");
 
-    // Create a persistent channel for Neovim redraw events
-    // This channel lives across multiple WebSocket connections
-    let (nvim_tx, nvim_rx) = mpsc::channel::<Vec<u8>>();
-    let nvim_rx = Arc::new(Mutex::new(nvim_rx));
-    
-    // Spawn the Neovim reader thread ONCE, before accepting connections
-    // This thread reads from Neovim stdout and sends to the channel
-    // Take ownership of stdout for the reader thread (safe, no unsafe pointer read)
-    let mut nvim_stdout = nvim.stdout.take()
-        .expect("stdout already taken - only one reader thread allowed");
-    
-    thread::spawn(move || {
+    // Spawn cleanup task
+    let cleanup_manager = session_manager.clone();
+    tokio::spawn(async move {
         loop {
-            match crate::rpc::read_message(&mut nvim_stdout) {
-                Ok(msg) => {
-                    // Handle RPC responses (type 1) - route to sync module
-                    if let rmpv::Value::Array(ref arr) = msg {
-                        if !arr.is_empty() {
-                            if let rmpv::Value::Integer(msg_type) = &arr[0] {
-                                if msg_type.as_u64() == Some(1) {
-                                    if let Err(e) = crate::rpc_sync::handle_rpc_response(&msg) {
-                                        eprintln!("Error handling RPC response: {}", e);
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Handle redraw notifications (type 2) - send to channel
-                    if crate::rpc::is_redraw(&msg) {
-                        let mut bytes = Vec::new();
-                        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
-                            // Channel send - if all receivers are gone, just drop the message
-                            // This happens when no browser is connected, which is fine
-                            let _ = nvim_tx.send(bytes);
-                        }
-                    }
-                }
-                Err(_) => {
-                    eprintln!("Neovim stdout closed, exiting reader thread");
-                    break;
-                }
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            let stale = cleanup_manager.write().await.cleanup_stale();
+            if !stale.is_empty() {
+                eprintln!("WS: Cleaned up {} stale sessions", stale.len());
             }
         }
     });
 
-    // Accept connections in a loop - new connections replace old ones
     loop {
-        println!("Waiting for UI connection...");
-        match server.accept() {
+        match listener.accept().await {
             Ok((stream, addr)) => {
-                println!("UI connected from {:?}", addr);
+                eprintln!("WS: Connection from {:?}", addr);
+                let manager = session_manager.clone();
                 
-                match accept(stream) {
-                    Ok(mut websocket) => {
-                        println!("WebSocket handshake complete");
-                        
-                        // Drain any stale messages from channel before starting bridge
-                        // This ensures the new client gets fresh state, not cached old redraws
-                        let rx_lock = nvim_rx.lock().unwrap();
-                        while rx_lock.try_recv().is_ok() {}
-                        drop(rx_lock);
-                        
-                        // Request a full redraw for the new connection
-                        // Use minimal 1x1 resize to trigger Neovim state re-emit
-                        // Browser sends actual viewport size immediately after WS open
-                        eprintln!("Requesting full redraw for new connection...");
-                        if let Some(ref mut stdin) = nvim.stdin {
-                            let _ = crate::rpc::send_notification(
-                                stdin,
-                                "nvim_ui_try_resize",
-                                vec![
-                                    Value::Integer(1.into()),
-                                    Value::Integer(1.into()),
-                                ],
-                            );
-                        }
-                        
-                        // Run the bridge with the shared channel
-                        if let Err(e) = bridge(nvim, &mut websocket, nvim_rx.clone()) {
-                            eprintln!("Bridge error: {}", e);
-                        }
-                        
-                        println!("UI disconnected, waiting for new connection...");
+                tokio::spawn(async move {
+                    if let Err(e) = handle_connection(stream, manager).await {
+                        eprintln!("WS: Connection error: {}", e);
                     }
-                    Err(e) => {
-                        eprintln!("WebSocket handshake failed: {}", e);
-                    }
-                }
+                });
             }
             Err(e) => {
-                eprintln!("Accept failed: {}", e);
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                eprintln!("WS: Accept failed: {}", e);
             }
         }
     }
 }
 
-fn bridge(
-    nvim: &mut Nvim, 
-    ws: &mut WebSocket<TcpStream>,
-    nvim_rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>
+async fn handle_connection(
+    stream: TcpStream,
+    manager: Arc<RwLock<AsyncSessionManager>>,
 ) -> Result<()> {
-    eprintln!("Starting bridge for new connection");
+    // Accept WebSocket connection
+    let ws = accept_async(stream).await?;
+    let (mut ws_tx, mut ws_rx) = ws.split();
     
-    // Initialize VFS Manager with backends
-    let mut vfs_manager = VfsManager::new();
-    let (to_ws_tx, _to_ws_rx) = mpsc::channel::<Vec<u8>>();
-    
-    let local_backend = Box::new(LocalFs::new("/tmp/nvim-web"));
-    vfs_manager.register_backend("local", local_backend);
-    
-    let browser_backend = Box::new(BrowserFsBackend::new("default", to_ws_tx.clone()));
-    vfs_manager.register_backend("browser", browser_backend);
-    eprintln!("VFS backends registered: local, browser (ssh on-demand)");
-    
-    // Channel for browser->Neovim messages
-    let (to_nvim_tx, to_nvim_rx) = mpsc::channel::<Vec<u8>>();
-    
-    // Channel to signal when WS reader exits
-    let (ws_done_tx, ws_done_rx) = mpsc::channel::<()>();
-    
-    // Thread to read from WebSocket and forward to Neovim
-    let ws_stream = ws.get_ref().try_clone()?;
-    let mut ws_read = WebSocket::from_raw_socket(ws_stream, tungstenite::protocol::Role::Server, None);
-    
-    thread::spawn(move || {
-        loop {
-            match ws_read.read() {
-                Ok(Message::Binary(data)) => {
-                    if to_nvim_tx.send(data).is_err() {
-                        break;
-                    }
-                }
-                Ok(Message::Close(_)) | Err(_) => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-        let _ = ws_done_tx.send(());
-    });
-    
-    // Main bridge loop
-    loop {
-        // Check if browser disconnected
-        if ws_done_rx.try_recv().is_ok() {
-            eprintln!("HOST: Browser disconnected, exiting bridge");
-            break;
-        }
-        
-        // Forward Neovim messages to WebSocket (from shared channel)
-        if let Ok(rx) = nvim_rx.try_lock() {
-            if let Ok(bytes) = rx.try_recv() {
-                drop(rx); // Release lock before blocking WS send
-                if ws.send(Message::Binary(bytes)).is_err() {
-                    eprintln!("HOST: WS send failed!");
-                    break;
-                }
-            }
-        }
-        
-        // Forward WebSocket messages to Neovim
-        if let Ok(data) = to_nvim_rx.try_recv() {
-            let mut cursor = std::io::Cursor::new(data);
-            if let Ok(value) = rmpv::decode::read_value(&mut cursor) {
-                if let Value::Array(ref arr) = value {
-                    if !arr.is_empty() {
-                        if let Value::Integer(msg_type) = &arr[0] {
-                            if msg_type.as_u64() == Some(3) {
-                                if let Err(e) = crate::rpc_sync::handle_fs_response(&value) {
-                                    eprintln!("Error handling FS response: {}", e);
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                }
-                
-                if let Some(ref mut stdin) = nvim.stdin {
-                    if handle_browser_message(&value, stdin, &mut vfs_manager).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    
-    println!("Bridge loop exited");
-    Ok(())
-}
+    eprintln!("WS: Handshake complete");
 
-fn handle_browser_message(msg: &Value, nvim_stdin: &mut impl Write, vfs_manager: &mut VfsManager) -> Result<()> {
-    if let Value::Array(arr) = msg {
-        if arr.len() >= 2 {
-            if let Value::String(method) = &arr[0] {
-                match method.as_str() {
-                    Some("open_vfs") => {
-                        if let Value::String(path) = &arr[1] {
-                            if let Some(path_str) = path.as_str() {
-                                if let Err(e) = crate::vfs_handlers::handle_open_vfs(
-                                    vfs_manager,
-                                    nvim_stdin,
-                                    path_str.to_string(),
-                                ) {
-                                    eprintln!("VFS open error: {}", e);
-                                    let error_msg = format!("VFS open failed: {}", e);
-                                    let _ = crate::rpc::send_notification(
-                                        nvim_stdin,
-                                        "nvim_err_writeln",
-                                        vec![Value::String(error_msg.into())],
-                                    );
-                                }
-                            }
+    // For now, always create a new session (session ID parsing would need HTTP headers)
+    // TODO: Parse session ID from initial HTTP upgrade request
+    let session_id = {
+        let mut mgr = manager.write().await;
+        match mgr.create_session().await {
+            Ok(id) => {
+                if let Some(session) = mgr.get_session_mut(&id) {
+                    session.connected = true;
+                }
+                id
+            }
+            Err(e) => {
+                eprintln!("WS: Failed to create session: {}", e);
+                return Err(e);
+            }
+        }
+    };
+
+    eprintln!("WS: Created session {}", session_id);
+
+    // Send session ID to client
+    let session_msg = Value::Array(vec![
+        Value::String("session".into()),
+        Value::String(session_id.clone().into()),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &session_msg)?;
+    ws_tx.send(Message::Binary(bytes)).await?;
+
+    // Get redraw receiver
+    let mut redraw_rx = {
+        let mgr = manager.read().await;
+        mgr.get_session(&session_id)
+            .map(|s| s.subscribe())
+            .ok_or_else(|| anyhow::anyhow!("Session not found"))?
+    };
+
+    // TODO: VFS initialization - disabled for initial async migration
+    // Will be re-enabled when VFS handlers are migrated to async
+
+    // Bidirectional bridge
+    let session_id_clone = session_id.clone();
+    let manager_clone = manager.clone();
+    
+    loop {
+        tokio::select! {
+            // Forward redraws to browser
+            result = redraw_rx.recv() => {
+                match result {
+                    Ok(bytes) => {
+                        if ws_tx.send(Message::Binary(bytes)).await.is_err() {
+                            eprintln!("WS: Send failed, disconnecting");
+                            break;
                         }
                     }
-                    Some("write_vfs") => {
-                        if let Value::Integer(bufnr) = &arr[1] {
-                            if let Some(bufnr_u64) = bufnr.as_u64() {
-                                if let Err(e) = crate::vfs_handlers::handle_write_vfs(
-                                    vfs_manager,
-                                    nvim_stdin,
-                                    bufnr_u64 as u32,
-                                ) {
-                                    eprintln!("VFS write error: {}", e);
-                                    let error_msg = format!("VFS write failed: {}", e);
-                                    let _ = crate::rpc::send_notification(
-                                        nvim_stdin,
-                                        "nvim_err_writeln",
-                                        vec![Value::String(error_msg.into())],
-                                    );
-                                }
-                            }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("WS: Lagged {} messages", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        eprintln!("WS: Redraw channel closed");
+                        break;
+                    }
+                }
+            }
+            
+            // Forward browser input to neovim
+            msg = ws_rx.next() => {
+                match msg {
+                    Some(Ok(Message::Binary(data))) => {
+                        if let Err(e) = handle_browser_message(
+                            &session_id_clone, 
+                            &manager_clone, 
+                            data
+                        ).await {
+                            eprintln!("WS: Error handling message: {}", e);
+                        }
+                        
+                        // Touch session
+                        let mut mgr = manager_clone.write().await;
+                        if let Some(session) = mgr.get_session_mut(&session_id_clone) {
+                            session.touch();
                         }
                     }
-                    Some("input") => {
-                        if let Value::String(keys) = &arr[1] {
-                            if let Some(key_str) = keys.as_str() {
-                                crate::rpc::send_input(nvim_stdin, key_str)?;
-                            }
-                        }
+                    Some(Ok(Message::Close(_))) => {
+                        eprintln!("WS: Client sent close");
+                        break;
                     }
-                    Some("resize") => {
-                        if arr.len() >= 3 {
-                            if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
-                                let cols = cols.as_u64().unwrap_or(80);
-                                let rows = rows.as_u64().unwrap_or(24);
-                                crate::rpc::send_resize(nvim_stdin, rows, cols)?;
-                            }
-                        }
+                    Some(Err(e)) => {
+                        eprintln!("WS: Error reading: {}", e);
+                        break;
+                    }
+                    None => {
+                        eprintln!("WS: Connection closed");
+                        break;
                     }
                     _ => {}
                 }
             }
         }
     }
+
+    // Mark session as disconnected
+    {
+        let mut mgr = manager.write().await;
+        if let Some(session) = mgr.get_session_mut(&session_id) {
+            session.connected = false;
+            session.touch();
+        }
+    }
+
+    eprintln!("WS: Client disconnected from session {}", session_id);
     Ok(())
 }
+
+async fn handle_browser_message(
+    session_id: &str,
+    manager: &Arc<RwLock<AsyncSessionManager>>,
+    data: Vec<u8>,
+) -> Result<()> {
+    let mut cursor = std::io::Cursor::new(data);
+    let msg = rmpv::decode::read_value(&mut cursor)?;
+    
+    if let Value::Array(arr) = msg {
+        if arr.len() >= 2 {
+            if let Value::String(method) = &arr[0] {
+                let mgr = manager.read().await;
+                let session = mgr.get_session(session_id)
+                    .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                
+                match method.as_str() {
+                    Some("input") => {
+                        if let Value::String(keys) = &arr[1] {
+                            if let Some(key_str) = keys.as_str() {
+                                session.input(key_str).await?;
+                            }
+                        }
+                    }
+                    Some("resize") => {
+                        if arr.len() >= 3 {
+                            if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
+                                let cols = cols.as_i64().unwrap_or(80);
+                                let rows = rows.as_i64().unwrap_or(24);
+                                session.resize(cols, rows).await?;
+                            }
+                        }
+                    }
+                    // TODO: Add VFS handlers
+                    _ => {}
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+use tokio::sync::broadcast;
