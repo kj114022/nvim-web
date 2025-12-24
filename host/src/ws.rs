@@ -15,9 +15,11 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
 
     // Attach UI ONCE at startup, before accepting any connections
     println!("Attaching Neovim UI...");
-    crate::rpc::attach_ui(&mut nvim.stdin)?;
+    let nvim_stdin = nvim.stdin.as_mut().expect("stdin not available");
+    crate::rpc::attach_ui(nvim_stdin)?;
     println!("Waiting for UI attach response...");
-    let _response = crate::rpc::read_message(&mut nvim.stdout)?;
+    let nvim_stdout_ref = nvim.stdout.as_mut().expect("stdout not available");
+    let _response = crate::rpc::read_message(nvim_stdout_ref)?;
     println!("UI attached successfully, ready for connections");
 
     // Create a persistent channel for Neovim redraw events
@@ -27,9 +29,9 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
     
     // Spawn the Neovim reader thread ONCE, before accepting connections
     // This thread reads from Neovim stdout and sends to the channel
-    let mut nvim_stdout = unsafe { 
-        std::ptr::read(&nvim.stdout as *const _)
-    };
+    // Take ownership of stdout for the reader thread (safe, no unsafe pointer read)
+    let mut nvim_stdout = nvim.stdout.take()
+        .expect("stdout already taken - only one reader thread allowed");
     
     thread::spawn(move || {
         loop {
@@ -84,17 +86,20 @@ pub fn serve(nvim: &mut Nvim) -> Result<()> {
                         while rx_lock.try_recv().is_ok() {}
                         drop(rx_lock);
                         
-                        // Force a full redraw by sending resize to current dimensions
-                        // This makes Neovim re-emit all UI state to the new client
+                        // Request a full redraw for the new connection
+                        // Use minimal 1x1 resize to trigger Neovim state re-emit
+                        // Browser sends actual viewport size immediately after WS open
                         eprintln!("Requesting full redraw for new connection...");
-                        let _ = crate::rpc::send_notification(
-                            &mut nvim.stdin,
-                            "nvim_ui_try_resize",
-                            vec![
-                                Value::Integer(80.into()),
-                                Value::Integer(24.into()),
-                            ],
-                        );
+                        if let Some(ref mut stdin) = nvim.stdin {
+                            let _ = crate::rpc::send_notification(
+                                stdin,
+                                "nvim_ui_try_resize",
+                                vec![
+                                    Value::Integer(1.into()),
+                                    Value::Integer(1.into()),
+                                ],
+                            );
+                        }
                         
                         // Run the bridge with the shared channel
                         if let Err(e) = bridge(nvim, &mut websocket, nvim_rx.clone()) {
@@ -197,8 +202,10 @@ fn bridge(
                     }
                 }
                 
-                if handle_browser_message(&value, &mut nvim.stdin, &mut vfs_manager).is_err() {
-                    break;
+                if let Some(ref mut stdin) = nvim.stdin {
+                    if handle_browser_message(&value, stdin, &mut vfs_manager).is_err() {
+                        break;
+                    }
                 }
             }
         }

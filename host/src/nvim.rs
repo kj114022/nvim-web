@@ -1,10 +1,10 @@
-use std::process::{Command, Stdio};
+use std::process::{Command, Stdio, ChildStdin, ChildStdout};
 use anyhow::Result;
 
 pub struct Nvim {
     pub child: std::process::Child,
-    pub stdin: std::process::ChildStdin,
-    pub stdout: std::process::ChildStdout,
+    pub stdin: Option<ChildStdin>,
+    pub stdout: Option<ChildStdout>,
 }
 
 impl Nvim {
@@ -16,8 +16,8 @@ impl Nvim {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take();
 
         Ok(Self { child, stdin, stdout })
     }
