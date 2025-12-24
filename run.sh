@@ -1,13 +1,18 @@
 #!/bin/bash
-# Build and run nvim-web host
+# Run nvim-web host (builds if needed)
 set -e
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "Building nvim-web host..."
-cd host
-cargo build --release
+# Check if binary exists and is newer than source
+BINARY="$SCRIPT_DIR/host/target/release/nvim-web-host"
+MAIN_RS="$SCRIPT_DIR/host/src/main.rs"
 
-echo ""
-echo "Starting nvim-web host..."
-exec ./target/release/nvim-web-host "$@"
+if [ ! -f "$BINARY" ] || [ "$MAIN_RS" -nt "$BINARY" ]; then
+    echo "Building nvim-web..."
+    cd "$SCRIPT_DIR/host"
+    cargo build --release --quiet
+    echo ""
+fi
+
+exec "$BINARY" "$@"
