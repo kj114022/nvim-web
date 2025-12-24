@@ -10,6 +10,10 @@ target/
 *.wasm
 pkg/
 
+# Binary output (use `cargo build --release` to generate)
+/nvim-web
+/bin/
+
 # IDE
 .vscode/
 .idea/

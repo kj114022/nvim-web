@@ -107,9 +107,10 @@ impl AsyncSession {
             }
         });
         
-        // Attach UI with ext_linegrid
+        // Attach UI with ext_linegrid and ext_multigrid for split window support
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
+        opts.set_multigrid_external(true);
         nvim.ui_attach(80, 24, &opts).await?;
         
         eprintln!("SESSION: Created new async session {}", id);
