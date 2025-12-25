@@ -1,0 +1,30 @@
+# rustfmt.toml - Project-wide formatting configuration
+# Reference: https://rust-lang.github.io/rustfmt/
+
+# Edition (must match Cargo.toml)
+edition = "2021"
+
+# Maximum line width
+max_width = 100
+
+# Use Unix-style line endings
+newline_style = "Unix"
+
+# Indent with 4 spaces
+tab_spaces = 4
+
+# Format strings (multiline)
+format_strings = false
+
+# Reorder imports
+reorder_imports = true
+group_imports = "StdExternalCrate"
+
+# Use field init shorthand (e.g., Foo { bar } instead of Foo { bar: bar })
+use_field_init_shorthand = true
+
+# Use try shorthand (e.g., foo? instead of try!(foo))
+use_try_shorthand = true
+
+# Format macros
+format_macro_matchers = true

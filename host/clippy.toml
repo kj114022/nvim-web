@@ -1,0 +1,14 @@
+# clippy.toml - Project-wide clippy configuration
+# Reference: https://rust-lang.github.io/rust-clippy/master/index.html
+
+# Warn on functions with too many arguments
+too-many-arguments-threshold = 8
+
+# Maximum complexity for functions
+cognitive-complexity-threshold = 30
+
+# Warn on large enums
+enum-variant-size-threshold = 200
+
+# Warn on large types being passed by value
+trivial-copy-size-limit = 16

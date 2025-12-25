@@ -37,3 +37,6 @@ archive/
 
 # Temporary files
 /tmp/
+
+# Build tool outputs
+repomix-output*.xml
