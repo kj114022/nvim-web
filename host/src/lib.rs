@@ -9,5 +9,20 @@ pub mod ws;
 pub mod vfs;
 pub mod vfs_handlers;
 
+// Connection management
+pub mod connection_manager;
+
+// Configuration
+pub mod config;
+
+// REST API
+pub mod api;
+
+// Multi-seat collaboration
+pub mod collaboration;
+
+// Security hardening
+pub mod security;
+
 // Utilities
 pub mod debug;
