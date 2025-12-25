@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --surface: #313244;
+      --text: #cdd6f4;
+      --blue: #89b4fa;
+      --green: #a6e3a1;
+      --red: #f38ba8;
+    }
+    body {
+      width: 280px;
+      padding: 16px;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      color: var(--blue);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status {
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .status.connected {
+      background: rgba(166, 227, 161, 0.15);
+      border: 1px solid var(--green);
+      color: var(--green);
+    }
+    .status.disconnected {
+      background: rgba(243, 139, 168, 0.15);
+      border: 1px solid var(--red);
+      color: var(--red);
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: var(--blue);
+      color: var(--bg);
+    }
+    button.primary {
+      background: var(--blue);
+      color: var(--bg);
+    }
+    button.primary:hover {
+      opacity: 0.9;
+    }
+    .settings {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--surface);
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 8px;
+      border: 1px solid var(--surface);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--blue);
+    }
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      color: var(--text);
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <h1>nvim-web</h1>
+  
+  <div id="status" class="status disconnected">
+    Checking connection...
+  </div>
+  
+  <button id="open" class="primary">Open nvim-web</button>
+  <button id="newSession">New Session</button>
+  
+  <div class="settings">
+    <label>Server URL</label>
+    <input type="text" id="serverUrl" placeholder="http://localhost:8080">
+    <button id="save">Save Settings</button>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
