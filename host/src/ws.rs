@@ -303,7 +303,9 @@ async fn handle_browser_message(
                             if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
                                 let cols = cols.as_i64().unwrap_or(80);
                                 let rows = rows.as_i64().unwrap_or(24);
+                                eprintln!("WS: Resize request: cols={}, rows={}", cols, rows);
                                 session.resize(cols, rows).await?;
+                                eprintln!("WS: Resize complete");
                             }
                         }
                     }

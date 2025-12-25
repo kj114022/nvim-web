@@ -563,9 +563,6 @@ fn apply_redraw(grid: &mut Grid, highlights: &mut HighlightMap, msg: &rmpv::Valu
                                                             for _ in 0..repeat {
                                                                 if col < grid.cols {
                                                                     grid.set_with_hl(row, col, ch, hl_id);
-                                                                    if ch != ' ' {
-                                                                        web_sys::console::log_1(&format!("CELL({},{})='{}'", row, col, ch).into());
-                                                                    }
                                                                     col += 1;
                                                                 }
                                                             }

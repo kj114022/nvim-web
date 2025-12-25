@@ -108,10 +108,11 @@ impl AsyncSession {
             }
         });
         
-        // Attach UI with ext_linegrid and ext_multigrid for split window support
+        // Attach UI with ext_linegrid (required for modern rendering)
+        // Note: ext_multigrid disabled - UI doesn't implement win_pos handlers yet
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
-        opts.set_multigrid_external(true);
+        // opts.set_multigrid_external(true);  // Disabled: causes grid overlap without win_pos
         nvim.ui_attach(80, 24, &opts).await?;
         
         eprintln!("SESSION: Created new async session {}", id);
