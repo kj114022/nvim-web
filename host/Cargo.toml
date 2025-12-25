@@ -21,6 +21,7 @@ async-trait = "0.1"
 
 # Keep tungstenite for now (will remove after migration)
 tungstenite = "0.24"
+http = "1.4.0"
 
 [dev-dependencies]
 tempfile = "3"

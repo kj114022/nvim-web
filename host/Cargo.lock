@@ -435,6 +435,7 @@ dependencies = [
  "async-trait",
  "dirs",
  "futures 0.3.31",
+ "http",
  "lazy_static",
  "nvim-rs",
  "rmp-serde",

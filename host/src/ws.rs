@@ -1,6 +1,7 @@
 //! Async WebSocket server using tokio-tungstenite
 //!
 //! Handles multiple concurrent connections with async session management.
+//! Includes origin validation and session reconnection support.
 
 use std::sync::Arc;
 
@@ -8,22 +9,43 @@ use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use rmpv::Value;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio::sync::{broadcast, RwLock};
+use tokio_tungstenite::tungstenite::{
+    handshake::server::{Request, Response},
+    Message,
+};
 
 use crate::session::AsyncSessionManager;
 
-/// Parse session ID from WebSocket upgrade request path
-fn parse_session_id_from_path(path: &str) -> Option<String> {
-    if let Some(query_start) = path.find('?') {
-        let query = &path[query_start + 1..];
+/// Allowed origins for WebSocket connections
+/// Only localhost is allowed by default for security
+const ALLOWED_ORIGINS: &[&str] = &[
+    "http://localhost",
+    "http://127.0.0.1",
+    "https://localhost",
+    "https://127.0.0.1",
+];
+
+/// Connection metadata extracted during WebSocket handshake
+#[derive(Debug, Clone, Default)]
+struct ConnectionInfo {
+    session_id: Option<String>,
+    origin: Option<String>,
+    origin_valid: bool,
+}
+
+/// Parse session ID from URI query string
+/// Format: /?session=<id> or /?session=new
+fn parse_session_id_from_uri(uri: &str) -> Option<String> {
+    if let Some(query_start) = uri.find('?') {
+        let query = &uri[query_start + 1..];
         for param in query.split('&') {
             if let Some(eq_pos) = param.find('=') {
                 let key = &param[..eq_pos];
                 let value = &param[eq_pos + 1..];
                 if key == "session" {
                     if value == "new" {
-                        return None;
+                        return None; // Explicit request for new session
                     }
                     return Some(value.to_string());
                 }
@@ -31,6 +53,11 @@ fn parse_session_id_from_path(path: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Validate origin header against whitelist
+fn validate_origin(origin: &str) -> bool {
+    ALLOWED_ORIGINS.iter().any(|allowed| origin.starts_with(allowed))
 }
 
 /// Main async WebSocket server
@@ -73,31 +100,73 @@ async fn handle_connection(
     stream: TcpStream,
     manager: Arc<RwLock<AsyncSessionManager>>,
 ) -> Result<()> {
-    // Accept WebSocket connection
-    let ws = accept_async(stream).await?;
+    // Capture connection info during handshake
+    let conn_info = Arc::new(std::sync::Mutex::new(ConnectionInfo::default()));
+    let conn_info_clone = conn_info.clone();
+    
+    // Accept WebSocket with header callback
+    let callback = move |req: &Request, response: Response| -> std::result::Result<Response, http::Response<Option<String>>> {
+        let mut info = conn_info_clone.lock().unwrap();
+        
+        // Extract session ID from URI
+        let uri = req.uri().to_string();
+        info.session_id = parse_session_id_from_uri(&uri);
+        eprintln!("WS: URI={}, parsed session_id={:?}", uri, info.session_id);
+        
+        // Extract and validate origin
+        if let Some(origin) = req.headers().get("origin") {
+            if let Ok(origin_str) = origin.to_str() {
+                info.origin = Some(origin_str.to_string());
+                info.origin_valid = validate_origin(origin_str);
+                eprintln!("WS: Origin={}, valid={}", origin_str, info.origin_valid);
+            }
+        } else {
+            // No origin header = same-origin request (OK)
+            info.origin_valid = true;
+        }
+        
+        Ok(response)
+    };
+    
+    let ws = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
     let (mut ws_tx, mut ws_rx) = ws.split();
+    
+    // Check origin validation result
+    let info = conn_info.lock().unwrap().clone();
+    if !info.origin_valid {
+        eprintln!("WS: Rejected connection from invalid origin: {:?}", info.origin);
+        let _ = ws_tx.close().await;
+        return Err(anyhow::anyhow!("Invalid origin"));
+    }
     
     eprintln!("WS: Handshake complete");
 
-    // For now, always create a new session (session ID parsing would need HTTP headers)
-    // TODO: Parse session ID from initial HTTP upgrade request
+    // Get or create session
     let session_id = {
         let mut mgr = manager.write().await;
-        match mgr.create_session().await {
-            Ok(id) => {
-                if let Some(session) = mgr.get_session_mut(&id) {
+        
+        // Try to reconnect to existing session
+        if let Some(ref existing_id) = info.session_id {
+            if mgr.has_session(existing_id) {
+                eprintln!("WS: Reconnecting to existing session {}", existing_id);
+                if let Some(session) = mgr.get_session_mut(existing_id) {
                     session.connected = true;
+                    session.touch();
+                    // Request redraw to sync UI state
+                    let _ = session.request_redraw().await;
                 }
-                id
+                existing_id.clone()
+            } else {
+                eprintln!("WS: Session {} not found, creating new", existing_id);
+                create_new_session(&mut mgr).await?
             }
-            Err(e) => {
-                eprintln!("WS: Failed to create session: {}", e);
-                return Err(e);
-            }
+        } else {
+            eprintln!("WS: Creating new session");
+            create_new_session(&mut mgr).await?
         }
     };
 
-    eprintln!("WS: Created session {}", session_id);
+    eprintln!("WS: Active session {}", session_id);
 
     // Send session ID to client
     let session_msg = Value::Array(vec![
@@ -115,9 +184,6 @@ async fn handle_connection(
             .map(|s| s.subscribe())
             .ok_or_else(|| anyhow::anyhow!("Session not found"))?
     };
-
-    // TODO: VFS initialization - disabled for initial async migration
-    // Will be re-enabled when VFS handlers are migrated to async
 
     // Bidirectional bridge
     let session_id_clone = session_id.clone();
@@ -193,6 +259,22 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Helper to create a new session
+async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
+    match mgr.create_session().await {
+        Ok(id) => {
+            if let Some(session) = mgr.get_session_mut(&id) {
+                session.connected = true;
+            }
+            Ok(id)
+        }
+        Err(e) => {
+            eprintln!("WS: Failed to create session: {}", e);
+            Err(e)
+        }
+    }
+}
+
 async fn handle_browser_message(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
@@ -225,7 +307,6 @@ async fn handle_browser_message(
                             }
                         }
                     }
-                    // TODO: Add VFS handlers
                     _ => {}
                 }
             }
@@ -234,5 +315,3 @@ async fn handle_browser_message(
     
     Ok(())
 }
-
-use tokio::sync::broadcast;

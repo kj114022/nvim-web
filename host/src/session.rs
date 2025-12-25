@@ -34,6 +34,7 @@ pub type NvimWriter = Compat<ChildStdin>;
 #[derive(Clone)]
 pub struct RedrawHandler {
     redraw_tx: broadcast::Sender<Vec<u8>>,
+    #[allow(dead_code)] // Kept for debugging purposes
     session_id: String,
 }
 
