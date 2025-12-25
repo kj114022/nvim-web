@@ -1,8 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#89b4fa">
+    <meta name="description" content="Neovim in the Browser - Full Neovim experience with WebSocket bridge">
     <title>Neovim Web</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" type="image/png" href="/icons/icon-192.png">
     <style>
       body {
         margin: 0;
@@ -29,6 +34,14 @@
     <script type="module">
       import init from "./pkg/nvim_web_ui.js";
       init();
+      
+      // Register service worker for PWA
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.log('SW registration failed:', err));
+      }
     </script>
   </body>
 </html>
+

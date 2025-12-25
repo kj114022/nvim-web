@@ -144,23 +144,63 @@ pub fn start() -> Result<(), JsValue> {
     // Initial render
     render_state.render_now();
 
-    // Session management: check localStorage for existing session ID
-    let storage = window().unwrap().local_storage().ok().flatten();
-    let existing_session = storage.as_ref()
-        .and_then(|s| s.get_item("nvim_session_id").ok())
-        .flatten();
+    // Session management: check URL params first, then localStorage
+    let win = window().unwrap();
+    let search = win.location().search().unwrap_or_default();
+    let storage = win.local_storage().ok().flatten();
     
-    // Build WebSocket URL with session ID if available
-    let ws_url = match existing_session {
+    // Parse ?session= from URL (handles both ?session=x and &session=x)
+    let url_session: Option<String> = if search.contains("session=") {
+        let search_clean = search.trim_start_matches('?');
+        search_clean.split('&')
+            .find(|p| p.starts_with("session="))
+            .and_then(|p| p.strip_prefix("session="))
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+    
+    // Determine session ID: URL param takes priority over localStorage
+    let (ws_url, should_clear_url) = match url_session {
+        Some(ref id) if id == "new" => {
+            // Force new session - clear localStorage
+            if let Some(ref s) = storage {
+                let _ = s.remove_item("nvim_session_id");
+            }
+            web_sys::console::log_1(&"SESSION: Forcing new session (URL param)".into());
+            ("ws://127.0.0.1:9001?session=new".to_string(), true)
+        }
         Some(ref id) => {
-            web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
-            format!("ws://127.0.0.1:9001?session={}", id)
+            // Join specific session from URL
+            web_sys::console::log_1(&format!("SESSION: Joining session {} (URL param)", id).into());
+            (format!("ws://127.0.0.1:9001?session={}", id), true)
         }
         None => {
-            web_sys::console::log_1(&"SESSION: Creating new session".into());
-            "ws://127.0.0.1:9001?session=new".to_string()
+            // No URL param, check localStorage
+            let existing_session = storage.as_ref()
+                .and_then(|s| s.get_item("nvim_session_id").ok())
+                .flatten();
+            
+            match existing_session {
+                Some(ref id) => {
+                    web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
+                    (format!("ws://127.0.0.1:9001?session={}", id), false)
+                }
+                None => {
+                    web_sys::console::log_1(&"SESSION: Creating new session".into());
+                    ("ws://127.0.0.1:9001?session=new".to_string(), false)
+                }
+            }
         }
     };
+    
+    // Clean URL after reading session param (removes ?session= from address bar)
+    if should_clear_url {
+        if let Ok(history) = win.history() {
+            let pathname = win.location().pathname().unwrap_or_default();
+            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&pathname));
+        }
+    }
 
     // Connect to WebSocket with session support
     web_sys::console::log_1(&format!("WS CREATING: {}", ws_url).into());
@@ -469,6 +509,71 @@ pub fn start() -> Result<(), JsValue> {
     
     editor_root.add_event_listener_with_callback("blur", onblur.as_ref().unchecked_ref())?;
     onblur.forget();
+
+    // Phase 3: Clipboard paste support
+    let input_queue_paste = input_queue.clone();
+    let onpaste = Closure::wrap(Box::new(move |e: web_sys::ClipboardEvent| {
+        e.prevent_default();
+        
+        if let Some(data) = e.clipboard_data() {
+            if let Ok(text) = data.get_data("text/plain") {
+                if !text.is_empty() {
+                    web_sys::console::log_1(&format!("PASTE: {} chars", text.len()).into());
+                    
+                    // Send each character to Neovim
+                    // For multi-line paste, convert newlines properly
+                    for c in text.chars() {
+                        let key = match c {
+                            '\n' => "<CR>".to_string(),
+                            '\r' => continue, // Skip carriage returns
+                            '\t' => "<Tab>".to_string(),
+                            '<' => "<lt>".to_string(),
+                            '\\' => "\\".to_string(),
+                            _ => c.to_string(),
+                        };
+                        input_queue_paste.send_key(&key);
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnMut(_)>);
+    
+    editor_root.add_event_listener_with_callback("paste", onpaste.as_ref().unchecked_ref())?;
+    onpaste.forget();
+
+    // Phase 5: Mobile touch support
+    let input_queue_touch = input_queue.clone();
+    let renderer_touch = renderer.clone();
+    let canvas_touch = canvas.clone();
+    let editor_root_touch = editor_root.clone();
+    let ontouchstart = Closure::wrap(Box::new(move |e: web_sys::TouchEvent| {
+        e.prevent_default();
+        
+        // Focus editor
+        let _ = editor_root_touch.focus();
+        
+        if let Some(touch) = e.touches().get(0) {
+            // Get touch position relative to canvas
+            let canvas_element: &web_sys::Element = canvas_touch.as_ref();
+            let rect = canvas_element.get_bounding_client_rect();
+            let x = touch.client_x() as f64 - rect.left();
+            let y = touch.client_y() as f64 - rect.top();
+            
+            // Convert to grid cell
+            let (cell_w, cell_h) = renderer_touch.cell_size();
+            let col = (x / cell_w).floor() as i32;
+            let row = (y / cell_h).floor() as i32;
+            
+            web_sys::console::log_1(&format!("TOUCH: ({},{}) -> cell ({},{})", x, y, col, row).into());
+            
+            // Send as left mouse click
+            let mouse_input = format!("<LeftMouse><{},{}>", col, row);
+            input_queue_touch.send_key(&mouse_input);
+        }
+    }) as Box<dyn FnMut(_)>);
+    
+    editor_root.add_event_listener_with_callback("touchstart", ontouchstart.as_ref().unchecked_ref())?;
+    ontouchstart.forget();
 
     Ok(())
 }

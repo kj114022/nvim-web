@@ -1,0 +1,34 @@
+# nvim-web Configuration
+# Place at ~/.config/nvim-web/config.toml
+
+# Server settings (for hosting)
+[server]
+# WebSocket port
+ws_port = 9001
+# HTTP port for UI
+http_port = 8080
+# Bind address
+bind = "127.0.0.1"
+
+# Session settings
+[session]
+# Session timeout in seconds (default: 5 minutes)
+timeout = 300
+# Maximum sessions
+max_sessions = 10
+
+# Saved connections (for :NvimWebConnect)
+[[connections]]
+name = "local"
+url = "ws://127.0.0.1:9001"
+
+# Example remote connection
+# [[connections]]
+# name = "work"
+# url = "wss://work.example.com:9001"
+
+# Example with SSH tunnel
+# [[connections]]
+# name = "home"
+# url = "ws://127.0.0.1:9002"
+# ssh_tunnel = { host = "home.example.com", port = 22, local_port = 9002, remote_port = 9001 }
