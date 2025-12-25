@@ -57,7 +57,9 @@ fn parse_session_id_from_uri(uri: &str) -> Option<String> {
 
 /// Validate origin header against whitelist
 fn validate_origin(origin: &str) -> bool {
-    ALLOWED_ORIGINS.iter().any(|allowed| origin.starts_with(allowed))
+    ALLOWED_ORIGINS
+        .iter()
+        .any(|allowed| origin.starts_with(allowed))
 }
 
 /// Main async WebSocket server
@@ -82,7 +84,7 @@ pub async fn serve_multi_async(session_manager: Arc<RwLock<AsyncSessionManager>>
             Ok((stream, addr)) => {
                 eprintln!("WS: Connection from {:?}", addr);
                 let manager = session_manager.clone();
-                
+
                 tokio::spawn(async move {
                     if let Err(e) = handle_connection(stream, manager).await {
                         eprintln!("WS: Connection error: {}", e);
@@ -103,16 +105,18 @@ async fn handle_connection(
     // Capture connection info during handshake
     let conn_info = Arc::new(std::sync::Mutex::new(ConnectionInfo::default()));
     let conn_info_clone = conn_info.clone();
-    
+
     // Accept WebSocket with header callback
-    let callback = move |req: &Request, response: Response| -> std::result::Result<Response, http::Response<Option<String>>> {
+    let callback = move |req: &Request,
+                         response: Response|
+          -> std::result::Result<Response, http::Response<Option<String>>> {
         let mut info = conn_info_clone.lock().unwrap();
-        
+
         // Extract session ID from URI
         let uri = req.uri().to_string();
         info.session_id = parse_session_id_from_uri(&uri);
         eprintln!("WS: URI={}, parsed session_id={:?}", uri, info.session_id);
-        
+
         // Extract and validate origin
         if let Some(origin) = req.headers().get("origin") {
             if let Ok(origin_str) = origin.to_str() {
@@ -124,27 +128,30 @@ async fn handle_connection(
             // No origin header = same-origin request (OK)
             info.origin_valid = true;
         }
-        
+
         Ok(response)
     };
-    
+
     let ws = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
     let (mut ws_tx, mut ws_rx) = ws.split();
-    
+
     // Check origin validation result
     let info = conn_info.lock().unwrap().clone();
     if !info.origin_valid {
-        eprintln!("WS: Rejected connection from invalid origin: {:?}", info.origin);
+        eprintln!(
+            "WS: Rejected connection from invalid origin: {:?}",
+            info.origin
+        );
         let _ = ws_tx.close().await;
         return Err(anyhow::anyhow!("Invalid origin"));
     }
-    
+
     eprintln!("WS: Handshake complete");
 
     // Get or create session
     let session_id = {
         let mut mgr = manager.write().await;
-        
+
         // Try to reconnect to existing session
         if let Some(ref existing_id) = info.session_id {
             if mgr.has_session(existing_id) {
@@ -188,7 +195,7 @@ async fn handle_connection(
     // Bidirectional bridge
     let session_id_clone = session_id.clone();
     let manager_clone = manager.clone();
-    
+
     loop {
         tokio::select! {
             // Forward redraws to browser
@@ -209,19 +216,31 @@ async fn handle_connection(
                     }
                 }
             }
-            
+
             // Forward browser input to neovim
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
-                        if let Err(e) = handle_browser_message(
-                            &session_id_clone, 
-                            &manager_clone, 
+                        match handle_browser_message(
+                            &session_id_clone,
+                            &manager_clone,
                             data
                         ).await {
-                            eprintln!("WS: Error handling message: {}", e);
+                            Ok(Some(response_bytes)) => {
+                                // Send RPC response back to browser
+                                if ws_tx.send(Message::Binary(response_bytes)).await.is_err() {
+                                    eprintln!("WS: Failed to send RPC response");
+                                    break;
+                                }
+                            }
+                            Ok(None) => {
+                                // Fire-and-forget message, no response needed
+                            }
+                            Err(e) => {
+                                eprintln!("WS: Error handling message: {}", e);
+                            }
                         }
-                        
+
                         // Touch session
                         let mut mgr = manager_clone.write().await;
                         if let Some(session) = mgr.get_session_mut(&session_id_clone) {
@@ -275,21 +294,73 @@ async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
     }
 }
 
+/// Handle messages from browser
+///
+/// Protocol envelope: [type, ...payload]
+/// - Type 0: RPC request [0, id, method, params] -> responds with [1, id, error, result]
+/// - Type "input": fire-and-forget input ["input", keys]
+/// - Type "resize": fire-and-forget resize ["resize", cols, rows]
+///
+/// Returns optional response bytes to send back to browser
 async fn handle_browser_message(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
     data: Vec<u8>,
-) -> Result<()> {
+) -> Result<Option<Vec<u8>>> {
     let mut cursor = std::io::Cursor::new(data);
     let msg = rmpv::decode::read_value(&mut cursor)?;
-    
+
     if let Value::Array(arr) = msg {
+        if arr.is_empty() {
+            return Ok(None);
+        }
+
+        // Check for RPC request (type 0)
+        if let Value::Integer(msg_type) = &arr[0] {
+            if msg_type.as_i64() == Some(0) && arr.len() >= 4 {
+                // RPC request: [0, id, method, params]
+                let id = arr[1].clone();
+                let method = arr[2].as_str().unwrap_or("");
+                let params = if let Value::Array(p) = &arr[3] {
+                    p.clone()
+                } else {
+                    vec![]
+                };
+
+                eprintln!(
+                    "WS: RPC call id={:?} method={} params={:?}",
+                    id, method, params
+                );
+
+                // Execute RPC call
+                let mgr = manager.read().await;
+                let session = mgr
+                    .get_session(session_id)
+                    .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+                let (error, result) = match session.rpc_call(method, params).await {
+                    Ok(value) => (Value::Nil, value),
+                    Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                };
+
+                // Build response: [1, id, error, result]
+                let response = Value::Array(vec![Value::Integer(1.into()), id, error, result]);
+
+                let mut bytes = Vec::new();
+                rmpv::encode::write_value(&mut bytes, &response)?;
+
+                return Ok(Some(bytes));
+            }
+        }
+
+        // Legacy string-based messages
         if arr.len() >= 2 {
             if let Value::String(method) = &arr[0] {
                 let mgr = manager.read().await;
-                let session = mgr.get_session(session_id)
+                let session = mgr
+                    .get_session(session_id)
                     .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
-                
+
                 match method.as_str() {
                     Some("input") => {
                         if let Value::String(keys) = &arr[1] {
@@ -300,7 +371,8 @@ async fn handle_browser_message(
                     }
                     Some("resize") => {
                         if arr.len() >= 3 {
-                            if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2]) {
+                            if let (Value::Integer(cols), Value::Integer(rows)) = (&arr[1], &arr[2])
+                            {
                                 let cols = cols.as_i64().unwrap_or(80);
                                 let rows = rows.as_i64().unwrap_or(24);
                                 eprintln!("WS: Resize request: cols={}, rows={}", cols, rows);
@@ -314,6 +386,6 @@ async fn handle_browser_message(
             }
         }
     }
-    
-    Ok(())
+
+    Ok(None)
 }

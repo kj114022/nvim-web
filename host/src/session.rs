@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use nvim_rs::{Handler, Neovim, Value};
 use nvim_rs::compat::tokio::Compat;
 use nvim_rs::create::tokio::new_child_cmd;
-use tokio::process::{Command, ChildStdin};
+use nvim_rs::{Handler, Neovim, Value};
+use tokio::process::{ChildStdin, Command};
 use tokio::sync::broadcast;
 
 /// Unique session identifier
@@ -40,7 +40,10 @@ pub struct RedrawHandler {
 
 impl RedrawHandler {
     pub fn new(session_id: String, redraw_tx: broadcast::Sender<Vec<u8>>) -> Self {
-        Self { redraw_tx, session_id }
+        Self {
+            redraw_tx,
+            session_id,
+        }
     }
 }
 
@@ -48,12 +51,7 @@ impl RedrawHandler {
 impl Handler for RedrawHandler {
     type Writer = NvimWriter;
 
-    async fn handle_notify(
-        &self,
-        name: String,
-        args: Vec<Value>,
-        _neovim: Neovim<Self::Writer>,
-    ) {
+    async fn handle_notify(&self, name: String, args: Vec<Value>, _neovim: Neovim<Self::Writer>) {
         if name == "redraw" {
             // Encode the redraw notification as msgpack for the browser
             // Format: [2, "redraw", [...events...]]
@@ -62,7 +60,7 @@ impl Handler for RedrawHandler {
                 Value::String("redraw".into()),
                 Value::Array(args),
             ]);
-            
+
             let mut bytes = Vec::new();
             if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
                 // Broadcast to all connected clients for this session
@@ -87,36 +85,35 @@ impl AsyncSession {
     pub async fn new() -> Result<Self> {
         let id = generate_session_id();
         let id_for_log = id.clone();
-        
+
         // Create broadcast channel for redraw events
         let (redraw_tx, _) = broadcast::channel::<Vec<u8>>(256);
-        
+
         // Create handler that forwards redraws
         let handler = RedrawHandler::new(id.clone(), redraw_tx.clone());
-        
+
         // Spawn neovim using nvim-rs
         let mut cmd = Command::new("nvim");
-        cmd.arg("--embed")
-           .arg("--headless");
-        
+        cmd.arg("--embed").arg("--headless");
+
         let (nvim, io_handler, _child) = new_child_cmd(&mut cmd, handler).await?;
-        
+
         // Spawn the IO handler task
         tokio::spawn(async move {
             if let Err(e) = io_handler.await {
                 eprintln!("SESSION {}: IO handler error: {:?}", id_for_log, e);
             }
         });
-        
+
         // Attach UI with ext_linegrid (required for modern rendering)
         // Note: ext_multigrid disabled - UI doesn't implement win_pos handlers yet
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
         // opts.set_multigrid_external(true);  // Disabled: causes grid overlap without win_pos
         nvim.ui_attach(80, 24, &opts).await?;
-        
+
         eprintln!("SESSION: Created new async session {}", id);
-        
+
         let now = Instant::now();
         Ok(Self {
             id,
@@ -127,34 +124,56 @@ impl AsyncSession {
             connected: false,
         })
     }
-    
+
     /// Mark this session as active
     pub fn touch(&mut self) {
         self.last_active = Instant::now();
     }
-    
+
     /// Get a receiver for redraw events
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.redraw_tx.subscribe()
     }
-    
+
     /// Send input to Neovim
     pub async fn input(&self, keys: &str) -> Result<()> {
         self.nvim.input(keys).await?;
         Ok(())
     }
-    
+
     /// Resize the UI
     pub async fn resize(&self, width: i64, height: i64) -> Result<()> {
         self.nvim.ui_try_resize(width, height).await?;
         Ok(())
     }
-    
+
     /// Request a full redraw (for reconnection)
     pub async fn request_redraw(&self) -> Result<()> {
         // Trigger redraw via command
         self.nvim.command("redraw!").await?;
         Ok(())
+    }
+
+    /// Execute an RPC call to Neovim and return the result
+    ///
+    /// This is used for browser-initiated RPC requests that need a response,
+    /// such as getting buffer contents, LSP info, or executing commands.
+    pub async fn rpc_call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
+        // Execute RPC call to Neovim
+        // nvim.call().await returns Result<Result<Value, Value>, CallError>
+        // Outer Result: async operation success/failure
+        // Inner Result: Neovim RPC success/error
+        let outer_result = self.nvim.call(method, args).await;
+
+        // Flatten the nested Results
+        match outer_result {
+            Ok(inner_result) => {
+                // inner_result is Result<Value, Value>
+                inner_result
+                    .map_err(|err_value| anyhow::anyhow!("Neovim RPC error: {:?}", err_value))
+            }
+            Err(call_error) => Err(anyhow::anyhow!("RPC call failed: {:?}", call_error)),
+        }
     }
 }
 
@@ -171,7 +190,7 @@ impl AsyncSessionManager {
             timeout: Duration::from_secs(300), // 5 minutes
         }
     }
-    
+
     /// Create a new session and return its ID
     pub async fn create_session(&mut self) -> Result<SessionId> {
         let session = AsyncSession::new().await?;
@@ -179,49 +198,50 @@ impl AsyncSessionManager {
         self.sessions.insert(id.clone(), session);
         Ok(id)
     }
-    
+
     /// Get a mutable reference to a session
     pub fn get_session_mut(&mut self, id: &str) -> Option<&mut AsyncSession> {
         self.sessions.get_mut(id)
     }
-    
+
     /// Get an immutable reference to a session
     pub fn get_session(&self, id: &str) -> Option<&AsyncSession> {
         self.sessions.get(id)
     }
-    
+
     /// Check if a session exists
     pub fn has_session(&self, id: &str) -> bool {
         self.sessions.contains_key(id)
     }
-    
+
     /// Remove a session
     pub fn remove_session(&mut self, id: &str) -> Option<AsyncSession> {
         eprintln!("SESSION: Removing session {}", id);
         self.sessions.remove(id)
     }
-    
+
     /// Clean up stale sessions
     pub fn cleanup_stale(&mut self) -> Vec<SessionId> {
         let now = Instant::now();
         let timeout = self.timeout;
-        
-        let stale_ids: Vec<SessionId> = self.sessions
+
+        let stale_ids: Vec<SessionId> = self
+            .sessions
             .iter()
             .filter(|(_, session)| {
                 !session.connected && now.duration_since(session.last_active) > timeout
             })
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         for id in &stale_ids {
             eprintln!("SESSION: Cleaning up stale session {}", id);
             self.sessions.remove(id);
         }
-        
+
         stale_ids
     }
-    
+
     /// Get session count
     pub fn session_count(&self) -> usize {
         self.sessions.len()
@@ -231,5 +251,90 @@ impl AsyncSessionManager {
 impl Default for AsyncSessionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Session metadata for API responses
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub created_at_secs: u64,
+    pub age_secs: u64,
+    pub connected: bool,
+    pub is_active: bool,
+}
+
+impl SessionInfo {
+    /// Convert to MessagePack Value for RPC
+    pub fn to_value(&self) -> rmpv::Value {
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::String("id".into()),
+                rmpv::Value::String(self.id.clone().into()),
+            ),
+            (
+                rmpv::Value::String("name".into()),
+                match &self.name {
+                    Some(n) => rmpv::Value::String(n.clone().into()),
+                    None => rmpv::Value::Nil,
+                },
+            ),
+            (
+                rmpv::Value::String("created_at_secs".into()),
+                rmpv::Value::Integer(self.created_at_secs.into()),
+            ),
+            (
+                rmpv::Value::String("age_secs".into()),
+                rmpv::Value::Integer(self.age_secs.into()),
+            ),
+            (
+                rmpv::Value::String("connected".into()),
+                rmpv::Value::Boolean(self.connected),
+            ),
+            (
+                rmpv::Value::String("is_active".into()),
+                rmpv::Value::Boolean(self.is_active),
+            ),
+        ])
+    }
+}
+
+impl AsyncSession {
+    /// Get session info for API
+    pub fn to_session_info(&self) -> SessionInfo {
+        let now = Instant::now();
+        SessionInfo {
+            id: self.id.clone(),
+            name: None, // TODO: Add name field to AsyncSession
+            created_at_secs: self.created_at.elapsed().as_secs(),
+            age_secs: now.duration_since(self.created_at).as_secs(),
+            connected: self.connected,
+            is_active: self.redraw_tx.receiver_count() > 0,
+        }
+    }
+}
+
+impl AsyncSessionManager {
+    /// List all sessions with metadata
+    pub fn list_sessions(&self) -> Vec<SessionInfo> {
+        self.sessions
+            .values()
+            .map(|s| s.to_session_info())
+            .collect()
+    }
+
+    /// Get session IDs
+    pub fn session_ids(&self) -> Vec<String> {
+        self.sessions.keys().cloned().collect()
+    }
+
+    /// Generate a shareable link for a session
+    pub fn get_share_link(&self, session_id: &str, host: &str) -> Option<String> {
+        if self.has_session(session_id) {
+            Some(format!("{}?session={}", host, session_id))
+        } else {
+            None
+        }
     }
 }

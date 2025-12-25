@@ -1,11 +1,11 @@
 pub mod backend;
-pub mod local;
 pub mod browser;
-pub mod ssh;
+pub mod local;
 pub mod manager;
+pub mod ssh;
 
-pub use backend::{VfsBackend, FileStat};
+pub use backend::{FileStat, VfsBackend};
+pub use browser::{BrowserFsBackend, FsRequestRegistry};
 pub use local::LocalFs;
-pub use browser::BrowserFsBackend;
+pub use manager::{ManagedBuffer, VfsManager};
 pub use ssh::SshFsBackend;
-pub use manager::{VfsManager, ManagedBuffer};
