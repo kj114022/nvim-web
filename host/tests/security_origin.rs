@@ -11,18 +11,14 @@ async fn test_origin_validation() {
     // Start server in background
     let manager = Arc::new(RwLock::new(AsyncSessionManager::new()));
 
-    // Note: We can't easily dynamically bind port in serve_multi_async without changing signature.
-    // For this test, we assume port 9001 is available or we spin up a modified version.
-    // Since serve_multi_async binds to 9001 hardcoded, we have to use that.
-
-    // Check if port 9001 is available, if not, skip test or fail gracefully
-    if TcpStream::connect("127.0.0.1:9001").await.is_ok() {
-        eprintln!("Port 9001 in use, skimming origin test");
+    // Check if port 9003 is available, if not, skip test or fail gracefully
+    if TcpStream::connect("127.0.0.1:9003").await.is_ok() {
+        eprintln!("Port 9003 in use, skimming origin test");
         return;
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager).await {
+        if let Err(e) = serve_multi_async(manager, 9003).await {
             eprintln!("Server error: {}", e);
         }
     });
@@ -30,7 +26,7 @@ async fn test_origin_validation() {
     // Give server time to start
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let url = "ws://127.0.0.1:9001";
+    let url = "ws://127.0.0.1:9003";
 
     // Test 1: Valid Origin (localhost)
     {

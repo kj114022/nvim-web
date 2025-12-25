@@ -13,20 +13,20 @@ async fn test_session_reconnection() {
     // Start server in background
     let manager = Arc::new(RwLock::new(AsyncSessionManager::new()));
 
-    if TcpStream::connect("127.0.0.1:9001").await.is_ok() {
-        eprintln!("Port 9001 in use, skimming reconnection test");
+    if TcpStream::connect("127.0.0.1:9002").await.is_ok() {
+        eprintln!("Port 9002 in use, skimming reconnection test");
         return;
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager).await {
+        if let Err(e) = serve_multi_async(manager, 9002).await {
             eprintln!("Server error: {}", e);
         }
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let url_base = "ws://127.0.0.1:9001";
+    let url_base = "ws://127.0.0.1:9002";
 
     // Step 1: Connect and get Session ID
     let session_id = {

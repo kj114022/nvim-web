@@ -63,9 +63,13 @@ fn validate_origin(origin: &str) -> bool {
 }
 
 /// Main async WebSocket server
-pub async fn serve_multi_async(session_manager: Arc<RwLock<AsyncSessionManager>>) -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:9001").await?;
-    println!("WebSocket server listening on ws://0.0.0.0:9001 (async mode)");
+pub async fn serve_multi_async(
+    session_manager: Arc<RwLock<AsyncSessionManager>>,
+    port: u16,
+) -> Result<()> {
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = TcpListener::bind(&addr).await?;
+    println!("WebSocket server listening on ws://{} (async mode)", addr);
 
     // Spawn cleanup task
     let cleanup_manager = session_manager.clone();

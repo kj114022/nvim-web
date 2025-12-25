@@ -185,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Run server with shutdown handler
     tokio::select! {
-        result = ws::serve_multi_async(session_manager) => {
+        result = ws::serve_multi_async(session_manager, port) => {
             result?;
         }
         _ = shutdown_signal => {
