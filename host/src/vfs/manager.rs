@@ -37,6 +37,11 @@ impl VfsManager {
         self.backends.insert(name.into(), backend);
     }
 
+    /// Get a reference to a registered backend
+    pub fn get_backend(&self, name: &str) -> Option<&dyn VfsBackend> {
+        self.backends.get(name).map(|b| b.as_ref())
+    }
+
     /// Parse VFS path: vfs://backend/path -> (backend, path)
     pub fn parse_vfs_path(&self, vfs_path: &str) -> Result<(String, String)> {
         if !vfs_path.starts_with("vfs://") {

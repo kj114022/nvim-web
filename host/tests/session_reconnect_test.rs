@@ -19,7 +19,7 @@ async fn test_session_reconnection() {
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager, 9002).await {
+        if let Err(e) = serve_multi_async(manager, 9002, None, None).await {
             eprintln!("Server error: {}", e);
         }
     });

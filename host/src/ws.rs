@@ -16,6 +16,9 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use crate::session::AsyncSessionManager;
+use crate::settings::SettingsStore;
+use crate::vfs::{FsRequestRegistry, VfsManager};
+use crate::vfs_handlers;
 
 /// Allowed origins for WebSocket connections
 /// Only localhost is allowed by default for security
@@ -63,9 +66,17 @@ fn validate_origin(origin: &str) -> bool {
 }
 
 /// Main async WebSocket server
+/// 
+/// # Arguments
+/// * `session_manager` - Session manager for Neovim sessions
+/// * `port` - Port to listen on
+/// * `fs_registry` - Optional FsRequestRegistry for BrowserFs support
+/// * `vfs_manager` - Optional VfsManager for VFS operations
 pub async fn serve_multi_async(
     session_manager: Arc<RwLock<AsyncSessionManager>>,
     port: u16,
+    fs_registry: Option<Arc<FsRequestRegistry>>,
+    vfs_manager: Option<Arc<RwLock<VfsManager>>>,
 ) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(&addr).await?;
@@ -88,9 +99,11 @@ pub async fn serve_multi_async(
             Ok((stream, addr)) => {
                 eprintln!("WS: Connection from {:?}", addr);
                 let manager = session_manager.clone();
+                let registry = fs_registry.clone();
+                let vfs = vfs_manager.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, manager).await {
+                    if let Err(e) = handle_connection(stream, manager, registry, vfs).await {
                         eprintln!("WS: Connection error: {}", e);
                     }
                 });
@@ -105,6 +118,8 @@ pub async fn serve_multi_async(
 async fn handle_connection(
     stream: TcpStream,
     manager: Arc<RwLock<AsyncSessionManager>>,
+    fs_registry: Option<Arc<FsRequestRegistry>>,
+    vfs_manager: Option<Arc<RwLock<VfsManager>>>,
 ) -> Result<()> {
     // Capture connection info during handshake
     let conn_info = Arc::new(std::sync::Mutex::new(ConnectionInfo::default()));
@@ -228,6 +243,8 @@ async fn handle_connection(
                         match handle_browser_message(
                             &session_id_clone,
                             &manager_clone,
+                            fs_registry.as_ref(),
+                            vfs_manager.as_ref(),
                             data
                         ).await {
                             Ok(Some(response_bytes)) => {
@@ -309,6 +326,8 @@ async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
 async fn handle_browser_message(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
+    fs_registry: Option<&Arc<FsRequestRegistry>>,
+    vfs_manager: Option<&Arc<RwLock<VfsManager>>>,
     data: Vec<u8>,
 ) -> Result<Option<Vec<u8>>> {
     let mut cursor = std::io::Cursor::new(data);
@@ -336,15 +355,179 @@ async fn handle_browser_message(
                     id, method, params
                 );
 
-                // Execute RPC call
-                let mgr = manager.read().await;
-                let session = mgr
-                    .get_session(session_id)
-                    .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                // Check for VFS methods first (handle locally, not forwarded to Neovim)
+                let vfs_result = match method {
+                    "vfs_open" if vfs_manager.is_some() => {
+                        // vfs_open(vfs_path) -> bufnr
+                        let vfs_path = params.first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        
+                        let mgr = manager.read().await;
+                        let session = mgr.get_session(session_id)
+                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                        let vfs = vfs_manager.as_ref().unwrap().read().await;
+                        
+                        Some(match vfs_handlers::handle_open_vfs(vfs_path, session, &*vfs).await {
+                            Ok(bufnr) => (Value::Nil, Value::Integer(bufnr.into())),
+                            Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                        })
+                    }
+                    "vfs_write" if vfs_manager.is_some() => {
+                        // vfs_write(vfs_path, bufnr) -> nil
+                        let vfs_path = params.first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let bufnr = params.get(1)
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        
+                        let mgr = manager.read().await;
+                        let session = mgr.get_session(session_id)
+                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                        let vfs = vfs_manager.as_ref().unwrap().read().await;
+                        
+                        Some(match vfs_handlers::handle_write_vfs(vfs_path, bufnr, session, &*vfs).await {
+                            Ok(()) => (Value::Nil, Value::Nil),
+                            Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                        })
+                    }
+                    "vfs_list" if vfs_manager.is_some() => {
+                        // vfs_list(path, depth) -> tree entries
+                        let path = params.first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("/");
+                        let depth = params.get(1)
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(1) as usize;
+                        
+                        let vfs = vfs_manager.as_ref().unwrap().read().await;
+                        // Use the "local" backend for now
+                        if let Some(backend) = vfs.get_backend("local") {
+                            Some(match vfs_handlers::handle_list_tree(path, depth, backend).await {
+                                Ok(tree) => (Value::Nil, vfs_handlers::tree_to_value(&tree)),
+                                Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                            })
+                        } else {
+                            Some((Value::String("No local backend".into()), Value::Nil))
+                        }
+                    }
+                    // Settings handlers
+                    "settings_get" => {
+                        let key = params.first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        
+                        Some(match SettingsStore::new() {
+                            Ok(store) => {
+                                let value = store.get(key)
+                                    .map(|v| Value::String(v.into()))
+                                    .unwrap_or(Value::Nil);
+                                (Value::Nil, value)
+                            }
+                            Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                        })
+                    }
+                    "settings_set" => {
+                        let key = params.first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let value = params.get(1)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        
+                        Some(match SettingsStore::new() {
+                            Ok(store) => {
+                                match store.set(key, value) {
+                                    Ok(()) => (Value::Nil, Value::Boolean(true)),
+                                    Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                                }
+                            }
+                            Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                        })
+                    }
+                    "settings_all" => {
+                        Some(match SettingsStore::new() {
+                            Ok(store) => {
+                                let all = store.get_all();
+                                let map: Vec<(Value, Value)> = all.into_iter()
+                                    .map(|(k, v)| (Value::String(k.into()), Value::String(v.into())))
+                                    .collect();
+                                (Value::Nil, Value::Map(map))
+                            }
+                            Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                        })
+                    }
+                    // CWD and Git info for status drawer
+                    "get_cwd_info" => {
+                        let mgr = manager.read().await;
+                        let session = mgr.get_session(session_id)
+                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                        
+                        // Get CWD from Neovim
+                        let cwd_result = session.rpc_call(
+                            "nvim_call_function",
+                            vec![Value::String("getcwd".into()), Value::Array(vec![])]
+                        ).await;
+                        
+                        let cwd = cwd_result.ok()
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "~".to_string());
+                        
+                        // Get current buffer name
+                        let buf_result = session.rpc_call(
+                            "nvim_buf_get_name",
+                            vec![Value::Integer(0.into())]
+                        ).await;
+                        
+                        let current_file = buf_result.ok()
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        
+                        // Detect git root and branch
+                        use crate::git;
+                        use std::path::Path;
+                        
+                        let git_root = git::find_git_root(Path::new(&cwd));
+                        let git_branch = git_root.as_ref()
+                            .and_then(|root| git::get_current_branch(root));
+                        
+                        // Determine backend from file path
+                        let backend = if current_file.starts_with("vfs://browser/") {
+                            "browser"
+                        } else if current_file.starts_with("vfs://ssh/") {
+                            "ssh"
+                        } else {
+                            "local"
+                        };
+                        
+                        // Build response map
+                        let map = vec![
+                            (Value::String("cwd".into()), Value::String(cwd.into())),
+                            (Value::String("file".into()), Value::String(current_file.into())),
+                            (Value::String("backend".into()), Value::String(backend.into())),
+                            (Value::String("git_branch".into()), 
+                             git_branch.map(|b| Value::String(b.into())).unwrap_or(Value::Nil)),
+                        ];
+                        
+                        Some((Value::Nil, Value::Map(map)))
+                    }
+                    _ => None, // Not a VFS/settings method, forward to Neovim
+                };
 
-                let (error, result) = match session.rpc_call(method, params).await {
-                    Ok(value) => (Value::Nil, value),
-                    Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                let (error, result) = if let Some(vfs_res) = vfs_result {
+                    vfs_res
+                } else {
+                    // Execute RPC call on Neovim
+                    let mgr = manager.read().await;
+                    let session = mgr
+                        .get_session(session_id)
+                        .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+                    match session.rpc_call(method, params).await {
+                        Ok(value) => (Value::Nil, value),
+                        Err(e) => (Value::String(e.to_string().into()), Value::Nil),
+                    }
                 };
 
                 // Build response: [1, id, error, result]
@@ -354,6 +537,27 @@ async fn handle_browser_message(
                 rmpv::encode::write_value(&mut bytes, &response)?;
 
                 return Ok(Some(bytes));
+            }
+
+            // Type 3: FS response from browser [3, id, ok, result]
+            if msg_type.as_i64() == Some(3) && arr.len() >= 4 {
+                if let Some(registry) = fs_registry {
+                    let id = arr[1].as_u64().unwrap_or(0);
+                    let ok = arr[2].as_bool().unwrap_or(false);
+                    let result = &arr[3];
+
+                    eprintln!("WS: FS response id={} ok={}", id, ok);
+
+                    if ok {
+                        registry.resolve(id, Ok(result.clone())).await;
+                    } else {
+                        let err_msg = result.as_str().unwrap_or("Unknown FS error");
+                        registry
+                            .resolve(id, Err(anyhow::anyhow!("{}", err_msg)))
+                            .await;
+                    }
+                }
+                return Ok(None);
             }
         }
 

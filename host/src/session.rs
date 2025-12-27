@@ -66,6 +66,41 @@ impl Handler for RedrawHandler {
                 // Broadcast to all connected clients for this session
                 let _ = self.redraw_tx.send(bytes);
             }
+        } else if name == "cwd_changed" {
+            // Real-time CWD sync: [cwd, file, backend, git_branch]
+            let cwd = args.first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("~");
+            let file = args.get(1)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let backend = args.get(2)
+                .and_then(|v| v.as_str())
+                .unwrap_or("local");
+            let git_branch = args.get(3)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            
+            // Build cwd_info message for UI
+            // Format: ["cwd_info", {cwd, file, backend, git_branch}]
+            let info_map = vec![
+                (Value::String("cwd".into()), Value::String(cwd.into())),
+                (Value::String("file".into()), Value::String(file.into())),
+                (Value::String("backend".into()), Value::String(backend.into())),
+                (Value::String("git_branch".into()), 
+                 git_branch.map(|b| Value::String(b.into())).unwrap_or(Value::Nil)),
+            ];
+            
+            let msg = Value::Array(vec![
+                Value::String("cwd_info".into()),
+                Value::Map(info_map),
+            ]);
+            
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                let _ = self.redraw_tx.send(bytes);
+                eprintln!("SESSION: CWD changed -> {} (git: {:?})", cwd, git_branch);
+            }
         }
     }
 }
@@ -93,8 +128,15 @@ impl AsyncSession {
         let handler = RedrawHandler::new(id.clone(), redraw_tx.clone());
 
         // Spawn neovim using nvim-rs
+        // --embed: Use stdin/stdout for msgpack RPC
+        // User's init.lua will be loaded (includes plugins like vim-fugitive)
         let mut cmd = Command::new("nvim");
-        cmd.arg("--embed").arg("--headless");
+        cmd.arg("--embed");
+        
+        // Set working directory to user's home or current dir
+        if let Ok(home) = std::env::var("HOME") {
+            cmd.current_dir(&home);
+        }
 
         let (nvim, io_handler, _child) = new_child_cmd(&mut cmd, handler).await?;
 
@@ -106,11 +148,123 @@ impl AsyncSession {
         });
 
         // Attach UI with ext_linegrid (required for modern rendering)
-        // Note: ext_multigrid disabled - UI doesn't implement win_pos handlers yet
+        // ext_multigrid DISABLED - using single-grid mode for now to avoid ghost text issues
+        // Can be re-enabled after proper multigrid rendering implementation
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
-        // opts.set_multigrid_external(true);  // Disabled: causes grid overlap without win_pos
+        // opts.set_multigrid_external(true);  // DISABLED: causes ghost text issues
         nvim.ui_attach(80, 24, &opts).await?;
+        
+        // Set up minimal Git command if fugitive isn't available
+        // Using :command instead of Lua for reliability
+        let check_git = nvim.command_output("silent! command Git").await;
+        if check_git.is_err() || check_git.unwrap_or_default().is_empty() {
+            let git_cmd = "command! -nargs=* Git execute '!' . 'git ' . <q-args>";
+            if let Err(e) = nvim.command(git_cmd).await {
+                eprintln!("SESSION: Git command setup failed: {:?}", e);
+            } else {
+                eprintln!("SESSION: Git command wrapper registered");
+            }
+        } else {
+            eprintln!("SESSION: Git command already exists (likely fugitive)");
+        }
+        
+        // Helper: Execute multi-line VimL via nvim_exec2
+        async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
+            // nvim_exec2(src, opts) - opts is a map with "output" key
+            let opts = vec![
+                (Value::String("output".into()), Value::Boolean(false)),
+            ];
+            nvim.call("nvim_exec2", vec![
+                Value::String(script.into()),
+                Value::Map(opts),
+            ]).await?;
+            Ok(())
+        }
+        
+        // Set up VfsStatus command to show current backend/path info
+        let vfs_status_cmd = r#"
+command! VfsStatus call NvimWeb_ShowVfsStatus()
+
+function! NvimWeb_ShowVfsStatus()
+  let l:buf = expand('%:p')
+  if l:buf =~# '^vfs://browser/'
+    echo 'Backend: browser (OPFS)'
+  elseif l:buf =~# '^vfs://ssh/'
+    echo 'Backend: ssh (remote)'
+  else
+    echo 'Backend: local (server filesystem)'
+  endif
+  echo 'Path: ' . (l:buf != '' ? l:buf : '[No Name]')
+  echo 'CWD: ' . getcwd()
+endfunction
+"#;
+        if let Err(e) = exec_viml(&nvim, vfs_status_cmd).await {
+            eprintln!("SESSION: VfsStatus command setup failed: {:?}", e);
+        } else {
+            eprintln!("SESSION: VfsStatus command registered");
+        }
+        
+        // Set up auto-CD to git root when opening files
+        let auto_cd_git = r#"
+augroup NvimWebGitCD
+  autocmd!
+  autocmd BufEnter * call NvimWeb_AutoCdToGitRoot()
+augroup END
+
+function! NvimWeb_AutoCdToGitRoot()
+  let l:file = expand('%:p')
+  if l:file == '' || l:file =~# '^term://' || l:file =~# '^fugitive://'
+    return
+  endif
+  let l:git_root = system('git -C ' . shellescape(expand('%:p:h')) . ' rev-parse --show-toplevel 2>/dev/null')
+  if v:shell_error == 0 && l:git_root != ''
+    execute 'lcd ' . fnameescape(trim(l:git_root))
+  endif
+endfunction
+"#;
+        if let Err(e) = exec_viml(&nvim, auto_cd_git).await {
+            eprintln!("SESSION: Auto-CD setup failed: {:?}", e);
+        } else {
+            eprintln!("SESSION: Auto-CD to git root enabled");
+        }
+        
+        // Set up real-time CWD sync - notifies host on DirChanged and BufEnter
+        let cwd_sync = r#"
+augroup NvimWebCwdSync
+  autocmd!
+  autocmd DirChanged * call NvimWeb_NotifyCwdChanged()
+  autocmd BufEnter * call NvimWeb_NotifyCwdChanged()
+augroup END
+
+function! NvimWeb_NotifyCwdChanged()
+  let l:cwd = getcwd()
+  let l:file = expand('%:p')
+  let l:git_branch = ''
+  
+  " Get git branch if in a git repo
+  let l:git_output = system('git -C ' . shellescape(l:cwd) . ' branch --show-current 2>/dev/null')
+  if v:shell_error == 0
+    let l:git_branch = trim(l:git_output)
+  endif
+  
+  " Determine backend from file path
+  let l:backend = 'local'
+  if l:file =~# '^vfs://browser/'
+    let l:backend = 'browser'
+  elseif l:file =~# '^vfs://ssh/'
+    let l:backend = 'ssh'
+  endif
+  
+  " Notify the host
+  call rpcnotify(0, 'cwd_changed', l:cwd, l:file, l:backend, l:git_branch)
+endfunction
+"#;
+        if let Err(e) = exec_viml(&nvim, cwd_sync).await {
+            eprintln!("SESSION: CWD sync setup failed: {:?}", e);
+        } else {
+            eprintln!("SESSION: Real-time CWD sync enabled");
+        }
 
         eprintln!("SESSION: Created new async session {}", id);
 

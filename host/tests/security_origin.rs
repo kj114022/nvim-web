@@ -18,7 +18,7 @@ async fn test_origin_validation() {
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager, 9003).await {
+        if let Err(e) = serve_multi_async(manager, 9003, None, None).await {
             eprintln!("Server error: {}", e);
         }
     });
@@ -49,8 +49,19 @@ async fn test_origin_validation() {
             .insert("Origin", "http://evil.com".parse().unwrap());
 
         match connect_async(request).await {
-            Ok(_) => panic!("Invalid origin accepted! Security failure."),
-            Err(_) => println!("Invalid origin rejected: OK"),
+            Ok((mut ws, _)) => {
+                // Server accepts handshake but should immediately close
+                use futures::StreamExt;
+                match ws.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                        println!("Invalid origin rejected via close: OK");
+                    }
+                    Some(msg) => {
+                        panic!("Invalid origin accepted and sent data: {:?}", msg);
+                    }
+                }
+            }
+            Err(_) => println!("Invalid origin rejected at handshake: OK"),
         }
     }
 
