@@ -1,6 +1,6 @@
 # nvim-web.nvim
 
-Neovim plugin for nvim-web browser integration.
+Minimal VFS helpers for nvim-web browser integration.
 
 ## Installation
 
@@ -8,17 +8,6 @@ Neovim plugin for nvim-web browser integration.
 
 ```lua
 {
-  "your-username/nvim-web.nvim",
-  config = function()
-    require("nvim-web").setup()
-  end,
-}
-```
-
-### packer.nvim
-
-```lua
-use {
   "your-username/nvim-web.nvim",
   config = function()
     require("nvim-web").setup()
@@ -37,56 +26,43 @@ require("nvim-web").setup()
 
 | Command | Description |
 |---------|-------------|
-| `:NvimWebExplorer [backend]` | Toggle file explorer (local/ssh/browser) |
-| `:NvimWebSessions` | Open session manager |
-| `:NvimWebSessionNew` | Create new session |
-| `:NvimWebSessionShare` | Copy share link |
-| `:NvimWebSSH user@host` | Mount SSH filesystem |
-| `:NvimWebConnections` | SSH connection manager |
-| `:NvimWebConnect url` | Connect to remote host |
+| `:E @local/path` | Open file from server filesystem |
+| `:E @browser/path` | Open file from browser OPFS |
+| `:E @ssh/user@host/path` | Open file from SSH remote |
+| `:VfsStatus` | Show current buffer's VFS backend |
 
-## File Explorer Keymaps
+## File Browsing
 
-| Key | Action |
-|-----|--------|
-| `Enter` / `l` | Open file/directory |
-| `h` / `-` | Go to parent directory |
-| `a` | Create new file/directory |
-| `d` | Delete |
-| `r` | Rename |
-| `y` | Copy path |
-| `R` | Refresh |
-| `1` / `2` / `3` | Switch to local/ssh/browser backend |
-| `q` / `Esc` | Close explorer |
+Use Neovim's built-in netrw:
 
-## Session Manager Keymaps
-
-| Key | Action |
-|-----|--------|
-| `n` | New session |
-| `s` | Share session |
-| `q` / `Esc` | Close |
-
-## SSH Connection Keymaps
-
-| Key | Action |
-|-----|--------|
-| `a` | Add connection |
-| `c` | Connect |
-| `d` | Disconnect |
-| `x` | Remove |
-| `Enter` | Browse files |
-| `q` / `Esc` | Close |
-
-## Configuration
-
-```lua
-require("nvim-web").setup({
-  explorer_width = 30,       -- Explorer sidebar width
-  explorer_position = "left", -- "left" or "right"
-  default_backend = "local",  -- "local", "ssh", or "browser"
-})
+```vim
+:Ex              " Open file explorer
+:Ex ~/projects   " Browse specific directory
+:Vex             " Vertical split explorer
 ```
+
+Or install a file explorer plugin:
+
+- [oil.nvim](https://github.com/stevearc/oil.nvim) - Edit filesystem like a buffer
+- [nvim-tree](https://github.com/nvim-tree/nvim-tree.lua) - Tree explorer
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) - Fuzzy finder
+
+## Git
+
+Use shell commands:
+
+```vim
+:!git status
+:!git diff
+:!git add %
+:!git commit -m "message"
+```
+
+Or install git plugins:
+
+- [fugitive.vim](https://github.com/tpope/vim-fugitive) - Git wrapper
+- [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) - Git signs in gutter
+- [lazygit.nvim](https://github.com/kdheepak/lazygit.nvim) - LazyGit integration
 
 ## License
 
