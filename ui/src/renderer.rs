@@ -2,15 +2,17 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
 use wasm_bindgen::{JsCast, JsValue};
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::grid::Grid;
+use crate::grid::{Grid, GridManager};
 use crate::highlight::HighlightMap;
 
 // Default colors (Neovim dark theme)
 const DEFAULT_BG: &str = "#1a1a1a";
 const DEFAULT_FG: &str = "#cccccc";
 // Selection color: Windows-style blue with alpha
+#[allow(dead_code)]
 const SELECTION_COLOR: &str = "rgba(0, 120, 215, 0.35)";
 // Focus overlay: subtle dim
+#[allow(dead_code)]
 const FOCUS_LOST_OVERLAY: &str = "rgba(0, 0, 0, 0.08)";
 // Cursor color
 const CURSOR_COLOR: &str = "#ff6600";
@@ -26,6 +28,7 @@ fn rgb_to_css(rgb: u32) -> String {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Renderer {
     canvas: Rc<HtmlCanvasElement>,
     ctx: Rc<CanvasRenderingContext2d>,
@@ -105,6 +108,7 @@ impl Renderer {
     }
 
     #[allow(deprecated)]  // web-sys set_fill_style deprecation is overzealous
+    #[allow(dead_code)]
     pub fn draw(&self, grid: &Grid, highlights: &HighlightMap) {
         let _grid_width = (grid.cols as f64) * self.cell_w;
         let _grid_height = (grid.rows as f64) * self.cell_h;
@@ -236,6 +240,83 @@ impl Renderer {
         if !grid.is_focused {
             self.ctx.set_fill_style(&FOCUS_LOST_OVERLAY.into());
             self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+        }
+    }
+
+    /// Draw all grids in z-order (for multigrid support)
+    #[allow(deprecated)]
+    pub fn draw_all(&self, grids: &GridManager, highlights: &HighlightMap) {
+        let canvas_width = self.canvas.width() as f64 / self.dpr;
+        let canvas_height = self.canvas.height() as f64 / self.dpr;
+
+        // Clear entire canvas
+        self.ctx.set_fill_style(&DEFAULT_BG.into());
+        self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+
+        // Simple single-grid mode: just draw all visible grids
+        // With multigrid disabled, only Grid 1 will exist
+        for grid in grids.grids_in_order() {
+            self.draw_grid_at_offset(grid, highlights);
+        }
+
+        // Draw cursor on active grid
+        let active_id = grids.active_grid_id();
+        if let Some(grid) = grids.get(active_id) {
+            let cursor_x = (grid.cursor_col as f64) * self.cell_w;
+            let cursor_y = (grid.cursor_row as f64) * self.cell_h;
+            self.ctx.set_fill_style(&CURSOR_COLOR.into());
+            self.ctx.fill_rect(cursor_x, cursor_y, self.cell_w, self.cell_h);
+        }
+    }
+
+    /// Draw a single grid at its offset position
+    /// Simplified for single-grid mode (multigrid disabled)
+    #[allow(deprecated)]
+    fn draw_grid_at_offset(&self, grid: &Grid, highlights: &HighlightMap) {
+        // In single-grid mode, just draw at (0,0)
+        // Grid offsets are only used when multigrid is enabled
+        let offset_x = (grid.col_offset as f64) * self.cell_w;
+        let offset_y = (grid.row_offset as f64) * self.cell_h;
+
+        // Draw optional background/border for floating windows
+        if grid.is_float {
+            let grid_width = (grid.cols as f64) * self.cell_w;
+            let grid_height = (grid.rows as f64) * self.cell_h;
+            // Shadow/border for float
+            self.ctx.set_fill_style(&"rgba(0,0,0,0.3)".into());
+            self.ctx.fill_rect(offset_x + 2.0, offset_y + 2.0, grid_width, grid_height);
+            // Background
+            self.ctx.set_fill_style(&DEFAULT_BG.into());
+            self.ctx.fill_rect(offset_x, offset_y, grid_width, grid_height);
+        }
+
+        // Draw all cells
+        for row in 0..grid.rows {
+            for col in 0..grid.cols {
+                let cell = &grid.cells[row * grid.cols + col];
+                let x = offset_x + (col as f64) * self.cell_w;
+                let y = offset_y + (row as f64) * self.cell_h;
+                
+                let hl = cell.hl_id.and_then(|id| highlights.get(id));
+                
+                // Background
+                if let Some(hl) = hl {
+                    if let Some(bg) = hl.bg {
+                        self.ctx.set_fill_style(&JsValue::from_str(&rgb_to_css(bg)));
+                        self.ctx.fill_rect(x, y, self.cell_w, self.cell_h);
+                    }
+                }
+                
+                // Text
+                if cell.ch != ' ' {
+                    let fg_css = hl.and_then(|h| h.fg).map(rgb_to_css).unwrap_or_else(|| DEFAULT_FG.to_string());
+                    self.ctx.set_fill_style(&JsValue::from_str(&fg_css));
+                    
+                    let mut buf = [0u8; 4];
+                    let s = cell.ch.encode_utf8(&mut buf);
+                    let _ = self.ctx.fill_text(s, x, y + self.ascent);
+                }
+            }
         }
     }
 }
