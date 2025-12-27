@@ -3,112 +3,145 @@ use wasm_bindgen::JsCast;
 use web_sys::{window, HtmlCanvasElement, WebSocket, MessageEvent, KeyboardEvent, ResizeObserver, ResizeObserverEntry};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 
 mod grid;
 mod highlight;
 mod renderer;
+mod input;
+mod render;
+mod events;
 
-use grid::Grid;
-use highlight::{HighlightMap, HighlightAttr};
+use grid::GridManager;
+use highlight::HighlightMap;
 use renderer::Renderer;
+use input::InputQueue;
+use render::RenderState;
+use events::apply_redraw;
 
-/// Input queue for FIFO input handling - decoupled from rendering
-struct InputQueue {
-    queue: RefCell<VecDeque<Vec<u8>>>,
-    ws: WebSocket,
+// JavaScript OPFS bridge - calls handleFsRequest from opfs.ts
+#[wasm_bindgen(module = "/fs/opfs.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = handleFsRequest, catch)]
+    async fn js_handle_fs_request(
+        op: &str,
+        ns: &str,
+        path: &str,
+        data: Option<js_sys::Uint8Array>,
+        id: u32,
+    ) -> Result<JsValue, JsValue>;
 }
 
-impl InputQueue {
-    fn new(ws: WebSocket) -> Rc<Self> {
-        Rc::new(Self {
-            queue: RefCell::new(VecDeque::new()),
-            ws,
-        })
-    }
-
-    /// Enqueue an input event (already encoded as msgpack bytes)
-    fn enqueue(&self, bytes: Vec<u8>) {
-        self.queue.borrow_mut().push_back(bytes);
-        self.flush();
-    }
-
-    /// Flush all queued input to WebSocket immediately
-    /// Never waits for render, preserves FIFO order
-    fn flush(&self) {
-        let mut queue = self.queue.borrow_mut();
-        while let Some(bytes) = queue.pop_front() {
-            let _ = self.ws.send_with_u8_array(&bytes);
-        }
-    }
-
-    /// Send a key input (convenience method)
-    fn send_key(&self, nvim_key: &str) {
-        let msg = rmpv::Value::Array(vec![
-            rmpv::Value::String("input".into()),
-            rmpv::Value::String(nvim_key.into()),
-        ]);
-        
-        let mut bytes = Vec::new();
-        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
-            self.enqueue(bytes);
+/// Set connection status indicator (connected/connecting/disconnected)
+fn set_status(status: &str) {
+    if let Some(doc) = window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("nvim-status") {
+            let _ = el.set_class_name(&format!("status-{}", status));
         }
     }
 }
 
-/// Render state for RAF-based batching
-struct RenderState {
-    grid: Rc<RefCell<Grid>>,
-    highlights: Rc<RefCell<HighlightMap>>,
-    renderer: Rc<Renderer>,
-    needs_render: Rc<RefCell<bool>>,
-    raf_scheduled: Rc<RefCell<bool>>,
-}
-
-impl RenderState {
-    fn new(grid: Rc<RefCell<Grid>>, highlights: Rc<RefCell<HighlightMap>>, renderer: Rc<Renderer>) -> Rc<Self> {
-        Rc::new(Self {
-            grid,
-            highlights,
-            renderer,
-            needs_render: Rc::new(RefCell::new(false)),
-            raf_scheduled: Rc::new(RefCell::new(false)),
-        })
-    }
-
-    /// Mark that a render is needed and schedule RAF if not already scheduled
-    fn request_render(self: &Rc<Self>) {
-        *self.needs_render.borrow_mut() = true;
-        
-        if !*self.raf_scheduled.borrow() {
-            *self.raf_scheduled.borrow_mut() = true;
+/// Show a toast notification (auto-hides after 3 seconds)
+fn show_toast(message: &str) {
+    if let Some(doc) = window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("nvim-toast") {
+            el.set_text_content(Some(message));
+            let _ = el.set_attribute("class", "show");
             
-            let state = self.clone();
+            // Auto-hide after 3 seconds
+            let el_clone = el.clone();
             let callback = Closure::once(Box::new(move || {
-                state.do_render();
+                let _ = el_clone.set_attribute("class", "");
             }) as Box<dyn FnOnce()>);
-            
-            let _ = window().unwrap().request_animation_frame(
-                callback.as_ref().unchecked_ref()
+            let _ = window().unwrap().set_timeout_with_callback_and_timeout_and_arguments_0(
+                callback.as_ref().unchecked_ref(),
+                3000,
             );
             callback.forget();
         }
     }
+}
 
-    /// Execute the actual render (called from RAF)
-    fn do_render(&self) {
-        *self.raf_scheduled.borrow_mut() = false;
-        
-        if *self.needs_render.borrow() {
-            *self.needs_render.borrow_mut() = false;
-            self.renderer.draw(&self.grid.borrow(), &self.highlights.borrow());
+/// Set dirty state indicator (unsaved changes)
+fn set_dirty(dirty: bool) {
+    if let Some(doc) = window().and_then(|w| w.document()) {
+        // Update dirty indicator visibility
+        if let Some(el) = doc.get_element_by_id("nvim-dirty") {
+            let _ = el.set_attribute("class", if dirty { "show" } else { "" });
+        }
+        // Update page title
+        let base_title = "Neovim Web";
+        let new_title = if dirty { format!("* {}", base_title) } else { base_title.to_string() };
+        doc.set_title(&new_title);
+    }
+}
+
+/// Focus the hidden input textarea (for IME/mobile)
+fn focus_input() {
+    if let Some(doc) = window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("nvim-input") {
+            if let Ok(html_el) = el.dyn_into::<web_sys::HtmlElement>() {
+                let _ = html_el.focus();
+            }
         }
     }
+}
 
-    /// Force immediate render (for resize, focus changes)
-    fn render_now(&self) {
-        *self.needs_render.borrow_mut() = false;
-        self.renderer.draw(&self.grid.borrow(), &self.highlights.borrow());
+/// Update drawer status bar with session ID
+fn update_drawer_session(session_id: &str, is_reconnection: bool) {
+    if let Some(win) = window() {
+        // Call window.__drawer.setSession(id, isReconnect)
+        if let Ok(drawer) = js_sys::Reflect::get(&win, &"__drawer".into()) {
+            if !drawer.is_undefined() {
+                if let Ok(set_session) = js_sys::Reflect::get(&drawer, &"setSession".into()) {
+                    if let Some(func) = set_session.dyn_ref::<js_sys::Function>() {
+                        let _ = func.call2(&drawer, &session_id.into(), &is_reconnection.into());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Update drawer with CWD info (backend, cwd, git branch)
+fn update_drawer_cwd_info(cwd: &str, file: &str, backend: &str, git_branch: Option<&str>) {
+    if let Some(win) = window() {
+        if let Ok(drawer) = js_sys::Reflect::get(&win, &"__drawer".into()) {
+            if drawer.is_undefined() {
+                return;
+            }
+            
+            // Set CWD
+            if let Ok(set_cwd) = js_sys::Reflect::get(&drawer, &"setCwd".into()) {
+                if let Some(func) = set_cwd.dyn_ref::<js_sys::Function>() {
+                    let _ = func.call1(&drawer, &cwd.into());
+                }
+            }
+            
+            // Set file
+            if let Ok(set_file) = js_sys::Reflect::get(&drawer, &"setFile".into()) {
+                if let Some(func) = set_file.dyn_ref::<js_sys::Function>() {
+                    let _ = func.call1(&drawer, &file.into());
+                }
+            }
+            
+            // Set backend
+            if let Ok(set_backend) = js_sys::Reflect::get(&drawer, &"setBackend".into()) {
+                if let Some(func) = set_backend.dyn_ref::<js_sys::Function>() {
+                    let _ = func.call1(&drawer, &backend.into());
+                }
+            }
+            
+            // Set git branch
+            if let Ok(set_git) = js_sys::Reflect::get(&drawer, &"setGitBranch".into()) {
+                if let Some(func) = set_git.dyn_ref::<js_sys::Function>() {
+                    let branch_js: JsValue = match git_branch {
+                        Some(b) => b.into(),
+                        None => JsValue::NULL,
+                    };
+                    let _ = func.call1(&drawer, &branch_js);
+                }
+            }
+        }
     }
 }
 
@@ -129,7 +162,7 @@ pub fn start() -> Result<(), JsValue> {
     let initial_cols = (css_width / cell_w).floor() as usize;
     let initial_rows = (css_height / cell_h).floor() as usize;
     
-    let grid = Rc::new(RefCell::new(Grid::new(initial_rows.max(24), initial_cols.max(80))));
+    let grids = Rc::new(RefCell::new(GridManager::new()));
     let renderer = Rc::new(renderer);
     
     // Phase 9.2.1: Highlight storage (needed for RenderState)
@@ -138,8 +171,11 @@ pub fn start() -> Result<(), JsValue> {
     // Apply initial HiDPI scaling
     renderer.resize(css_width, css_height);
 
+    // Resize main grid to match viewport
+    grids.borrow_mut().resize_grid(1, initial_rows.max(24), initial_cols.max(80));
+
     // Create render state for batching
-    let render_state = RenderState::new(grid.clone(), highlights.clone(), renderer.clone());
+    let render_state = RenderState::new(grids.clone(), highlights.clone(), renderer.clone());
 
     // Initial render
     render_state.render_now();
@@ -160,20 +196,50 @@ pub fn start() -> Result<(), JsValue> {
         None
     };
     
+    // Parse ?open= from URL (magic link)
+    let open_token: Option<String> = if search.contains("open=") {
+        let search_clean = search.trim_start_matches('?');
+        search_clean.split('&')
+            .find(|p| p.starts_with("open="))
+            .and_then(|p| p.strip_prefix("open="))
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+    
+    // Store project path if we have an open token (will be used after connection)
+    let project_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let project_name: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    
+    // If we have an open token, try to claim it
+    if let Some(ref token) = open_token {
+        web_sys::console::log_1(&format!("MAGIC LINK: Claiming token {}", token).into());
+        // We'll use fetch to claim the token (synchronously via spawn_local later)
+        // For now, store the token - we'll claim it after WS connects
+        project_path.borrow_mut().replace(token.clone());
+        show_toast(&format!("Opening project..."));
+    }
+    
     // Determine session ID: URL param takes priority over localStorage
-    let (ws_url, should_clear_url) = match url_session {
+    // Track if this is a reconnection to show toast
+    let (ws_url, should_clear_url, _is_reconnection) = match url_session {
         Some(ref id) if id == "new" => {
             // Force new session - clear localStorage
             if let Some(ref s) = storage {
                 let _ = s.remove_item("nvim_session_id");
             }
             web_sys::console::log_1(&"SESSION: Forcing new session (URL param)".into());
-            ("ws://127.0.0.1:9001?session=new".to_string(), true)
+            ("ws://127.0.0.1:9001?session=new".to_string(), true, false)
         }
         Some(ref id) => {
             // Join specific session from URL
             web_sys::console::log_1(&format!("SESSION: Joining session {} (URL param)", id).into());
-            (format!("ws://127.0.0.1:9001?session={}", id), true)
+            (format!("ws://127.0.0.1:9001?session={}", id), true, true)
+        }
+        None if open_token.is_some() => {
+            // Magic link - always create new session
+            web_sys::console::log_1(&"SESSION: Creating new session for magic link".into());
+            ("ws://127.0.0.1:9001?session=new".to_string(), true, false)
         }
         None => {
             // No URL param, check localStorage
@@ -184,17 +250,17 @@ pub fn start() -> Result<(), JsValue> {
             match existing_session {
                 Some(ref id) => {
                     web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
-                    (format!("ws://127.0.0.1:9001?session={}", id), false)
+                    (format!("ws://127.0.0.1:9001?session={}", id), false, true)
                 }
                 None => {
                     web_sys::console::log_1(&"SESSION: Creating new session".into());
-                    ("ws://127.0.0.1:9001?session=new".to_string(), false)
+                    ("ws://127.0.0.1:9001?session=new".to_string(), false, false)
                 }
             }
         }
     };
     
-    // Clean URL after reading session param (removes ?session= from address bar)
+    // Clean URL after reading session param (removes ?session= and ?open= from address bar)
     if should_clear_url {
         if let Ok(history) = win.history() {
             let pathname = win.location().pathname().unwrap_or_default();
@@ -230,6 +296,7 @@ pub fn start() -> Result<(), JsValue> {
     let initial_cols_send = initial_cols.max(80);
     let onopen = Closure::wrap(Box::new(move |_: web_sys::Event| {
         web_sys::console::log_1(&"WS OPEN".into());
+        set_status("connected");
         
         // Send initial resize to tell Neovim the actual browser viewport size
         let msg = rmpv::Value::Array(vec![
@@ -242,6 +309,19 @@ pub fn start() -> Result<(), JsValue> {
             let _ = ws_open.send_with_u8_array(&bytes);
             web_sys::console::log_1(&format!("Sent initial resize: {}x{}", initial_cols_send, initial_rows_send).into());
         }
+        
+        // Request settings from host (RPC call: settings_all)
+        let settings_req = rmpv::Value::Array(vec![
+            rmpv::Value::Integer(0.into()),  // Type 0 = RPC request
+            rmpv::Value::Integer(1.into()),  // Request ID
+            rmpv::Value::String("settings_all".into()),
+            rmpv::Value::Array(vec![]),      // No params
+        ]);
+        let mut settings_bytes = Vec::new();
+        if rmpv::encode::write_value(&mut settings_bytes, &settings_req).is_ok() {
+            let _ = ws_open.send_with_u8_array(&settings_bytes);
+            web_sys::console::log_1(&"SETTINGS: Requested from host".into());
+        }
     }) as Box<dyn FnMut(_)>);
     ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
     onopen.forget();
@@ -250,6 +330,8 @@ pub fn start() -> Result<(), JsValue> {
     let onerror = Closure::wrap(Box::new(move |e: web_sys::ErrorEvent| {
         web_sys::console::error_1(&"WS ERROR".into());
         web_sys::console::error_1(&e);
+        set_status("disconnected");
+        show_toast("Connection error");
     }) as Box<dyn FnMut(_)>);
     ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
     onerror.forget();
@@ -261,6 +343,8 @@ pub fn start() -> Result<(), JsValue> {
         
         // If abnormal close (not 1000), clear session ID to force new session on reconnect
         if e.code() != 1000 && e.code() != 1001 {
+            set_status("disconnected");
+            show_toast("Disconnected from host");
             if let Some(s) = window().unwrap().local_storage().ok().flatten() {
                 let _ = s.remove_item("nvim_session_id");
                 web_sys::console::warn_1(&"SESSION: Cleared due to abnormal disconnect".into());
@@ -272,9 +356,11 @@ pub fn start() -> Result<(), JsValue> {
 
 
     // Handle incoming redraw events with batching
-    let grid_msg = grid.clone();
+    let grids_msg = grids.clone();
     let render_state_msg = render_state.clone();
     let highlights_msg = highlights.clone();
+    let ws_fs = ws.clone(); // Clone for FS response sending
+    let ws_rpc = ws.clone(); // Clone for RPC request sending (cwd_info)
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
         web_sys::console::log_1(&"WS MESSAGE".into());
         if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
@@ -284,20 +370,258 @@ pub fn start() -> Result<(), JsValue> {
             // Decode msgpack message
             let mut cursor = std::io::Cursor::new(bytes);
             if let Ok(msg) = rmpv::decode::read_value(&mut cursor) {
-                // Check if this is a session message: ["session", "<id>"]
+                // Check message type for routing
                 if let rmpv::Value::Array(ref arr) = msg {
                     if arr.len() >= 2 {
+                        // Type 2 messages: differentiate between FS requests and redraw notifications
+                        // FS request: [2, <integer_id>, [op, ns, path, data?]] - arr[1] is integer
+                        // Redraw:     [2, "redraw", [...events...]] - arr[1] is string
+                        if let rmpv::Value::Integer(ref msg_type) = arr[0] {
+                            if msg_type.as_i64() == Some(2) && arr.len() >= 3 {
+                                // Check if arr[1] is an integer (FS request ID) not a string (e.g., "redraw")
+                                if let rmpv::Value::Integer(ref fs_id) = arr[1] {
+                                    // This is an FS request, not a redraw notification
+                                    // Format: [2, id, [op, ns, path, data?]]
+                                    let request_id = fs_id.as_u64().unwrap_or(0) as u32;
+                                    
+                                    // Parse the request payload at arr[2]
+                                    if let rmpv::Value::Array(ref payload) = arr[2] {
+                                        if payload.len() >= 3 {
+                                            let op = payload[0].as_str().unwrap_or("").to_string();
+                                            let ns = payload[1].as_str().unwrap_or("default").to_string();
+                                            let path = payload[2].as_str().unwrap_or("").to_string();
+                                            
+                                            // Extract optional data for write operations
+                                            let data: Option<Vec<u8>> = if payload.len() >= 4 {
+                                                if let rmpv::Value::Binary(ref bytes) = payload[3] {
+                                                    Some(bytes.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            };
+                                            
+                                            web_sys::console::log_1(&format!(
+                                                "FS: Request id={} op={} ns={} path={}", 
+                                                request_id, op, ns, path
+                                            ).into());
+                                            
+                                            // Clone WebSocket for use in async context
+                                            let ws_response = ws_fs.clone();
+                                            
+                                            // Spawn async task to handle FS request
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                // Prepare data as Uint8Array for JS
+                                                let js_data = data.map(|bytes| {
+                                                    let arr = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+                                                    arr.copy_from(&bytes);
+                                                    arr
+                                                });
+                                                
+                                                // Call the JavaScript OPFS handler
+                                                let result = js_handle_fs_request(
+                                                    &op, &ns, &path, js_data, request_id
+                                                ).await;
+                                                
+                                                // Build Type 3 response: [3, id, ok, result]
+                                                let response = match result {
+                                                    Ok(js_result) => {
+                                                        // Parse JS result object: { ok, result, error?, id }
+                                                        let ok = js_sys::Reflect::get(&js_result, &"ok".into())
+                                                            .ok()
+                                                            .and_then(|v| v.as_bool())
+                                                            .unwrap_or(false);
+                                                        
+                                                        if ok {
+                                                            // Success - get result
+                                                            let result_val = js_sys::Reflect::get(&js_result, &"result".into())
+                                                                .ok();
+                                                            
+                                                            // Convert JS result to msgpack Value
+                                                            let msgpack_result = if let Some(val) = result_val {
+                                                                if val.is_null() || val.is_undefined() {
+                                                                    rmpv::Value::Nil
+                                                                } else if let Some(arr) = val.dyn_ref::<js_sys::Uint8Array>() {
+                                                                    // Binary data (e.g., file content)
+                                                                    rmpv::Value::Binary(arr.to_vec())
+                                                                } else if let Some(arr) = val.dyn_ref::<js_sys::Array>() {
+                                                                    // Array (e.g., file list)
+                                                                    let items: Vec<rmpv::Value> = (0..arr.length())
+                                                                        .filter_map(|i| {
+                                                                            arr.get(i).as_string().map(|s| rmpv::Value::String(s.into()))
+                                                                        })
+                                                                        .collect();
+                                                                    rmpv::Value::Array(items)
+                                                                } else {
+                                                                    rmpv::Value::Nil
+                                                                }
+                                                            } else {
+                                                                rmpv::Value::Nil
+                                                            };
+                                                            
+                                                            rmpv::Value::Array(vec![
+                                                                rmpv::Value::Integer(3.into()),
+                                                                rmpv::Value::Integer((request_id as i64).into()),
+                                                                rmpv::Value::Boolean(true),
+                                                                msgpack_result,
+                                                            ])
+                                                        } else {
+                                                            // Error from JS handler
+                                                            let error = js_sys::Reflect::get(&js_result, &"error".into())
+                                                                .ok()
+                                                                .and_then(|v| v.as_string())
+                                                                .unwrap_or_else(|| "Unknown error".to_string());
+                                                            
+                                                            rmpv::Value::Array(vec![
+                                                                rmpv::Value::Integer(3.into()),
+                                                                rmpv::Value::Integer((request_id as i64).into()),
+                                                                rmpv::Value::Boolean(false),
+                                                                rmpv::Value::String(error.into()),
+                                                            ])
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        // JS exception
+                                                        let error = e.as_string()
+                                                            .unwrap_or_else(|| "JS exception".to_string());
+                                                        
+                                                        rmpv::Value::Array(vec![
+                                                            rmpv::Value::Integer(3.into()),
+                                                            rmpv::Value::Integer((request_id as i64).into()),
+                                                            rmpv::Value::Boolean(false),
+                                                            rmpv::Value::String(error.into()),
+                                                        ])
+                                                    }
+                                                };
+                                                
+                                                // Encode and send response
+                                                let mut bytes = Vec::new();
+                                                if rmpv::encode::write_value(&mut bytes, &response).is_ok() {
+                                                    if let Err(e) = ws_response.send_with_u8_array(&bytes) {
+                                                        web_sys::console::error_1(&format!(
+                                                            "FS: Failed to send response: {:?}", e
+                                                        ).into());
+                                                    } else {
+                                                        web_sys::console::log_1(&format!(
+                                                            "FS: Sent response for id={}", request_id
+                                                        ).into());
+                                                    }
+                                                }
+                                            });
+                                            
+                                            return; // FS request is being handled async
+                                        }
+                                    }
+                                    
+                                    // Malformed FS request - log and return
+                                    web_sys::console::warn_1(&"FS: Malformed request (missing payload)".into());
+                                    return;
+                                }
+                                // If arr[1] is not an integer, fall through to process as redraw
+                            }
+                            
+                            // Type 1: RPC response [1, id, error, result]
+                            // Handle settings_all response (id=1 from our request)
+                            if msg_type.as_i64() == Some(1) && arr.len() >= 4 {
+                                let id = arr[1].as_i64().unwrap_or(0);
+                                let error = &arr[2];
+                                let result = &arr[3];
+                                
+                                web_sys::console::log_1(&format!("RPC Response id={}", id).into());
+                                
+                                // Check for settings_all response (id=1)
+                                if id == 1 {
+                                    if error.is_nil() {
+                                        // Settings received - apply them
+                                        web_sys::console::log_1(&"SETTINGS: Received from host".into());
+                                        
+                                        if let rmpv::Value::Map(ref settings_map) = result {
+                                            for (key, value) in settings_map {
+                                                if let (Some(k), Some(v)) = (key.as_str(), value.as_str()) {
+                                                    web_sys::console::log_1(&format!("SETTING: {}={}", k, v).into());
+                                                    // Settings are stored - Neovim handles actual rendering
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Error receiving settings
+                                        let error_msg = error.as_str().unwrap_or("Settings error");
+                                        web_sys::console::error_1(&format!("SETTINGS ERROR: {}", error_msg).into());
+                                    }
+                                }
+                                
+                                // Check for get_cwd_info response (id=2)
+                                if id == 2 {
+                                    if error.is_nil() {
+                                        web_sys::console::log_1(&"CWD INFO: Received from host".into());
+                                        
+                                        if let rmpv::Value::Map(ref info_map) = result {
+                                            let mut cwd = String::new();
+                                            let mut file = String::new();
+                                            let mut backend = "local".to_string();
+                                            let mut git_branch: Option<String> = None;
+                                            
+                                            for (key, value) in info_map {
+                                                match key.as_str() {
+                                                    Some("cwd") => cwd = value.as_str().unwrap_or("~").to_string(),
+                                                    Some("file") => file = value.as_str().unwrap_or("").to_string(),
+                                                    Some("backend") => backend = value.as_str().unwrap_or("local").to_string(),
+                                                    Some("git_branch") => git_branch = value.as_str().map(|s| s.to_string()),
+                                                    _ => {}
+                                                }
+                                            }
+                                            
+                                            web_sys::console::log_1(&format!(
+                                                "CWD INFO: backend={} cwd={} file={} git={:?}",
+                                                backend, cwd, file, git_branch
+                                            ).into());
+                                            
+                                            update_drawer_cwd_info(&cwd, &file, &backend, git_branch.as_deref());
+                                        }
+                                    } else {
+                                        let error_msg = error.as_str().unwrap_or("CWD info error");
+                                        web_sys::console::error_1(&format!("CWD INFO ERROR: {}", error_msg).into());
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        
+                        // Session message: ["session", "<id>"]
                         if let rmpv::Value::String(ref method) = arr[0] {
                             if method.as_str() == Some("session") {
                                 if let rmpv::Value::String(ref session_id) = arr[1] {
                                     if let Some(id) = session_id.as_str() {
                                         web_sys::console::log_1(&format!("SESSION: Received session ID: {}", id).into());
-                                        // Store session ID in localStorage
-                                        if let Ok(Some(storage)) = window().unwrap().local_storage() {
+                                        // Check if this is a reconnection (session ID already in localStorage)
+                                        let is_reconnection = if let Ok(Some(storage)) = window().unwrap().local_storage() {
+                                            let existing = storage.get_item("nvim_session_id").ok().flatten();
+                                            let is_recon = existing.as_ref().map(|e| e == id).unwrap_or(false);
+                                            // Store session ID in localStorage
                                             let _ = storage.set_item("nvim_session_id", id);
                                             web_sys::console::log_1(&"SESSION: Stored in localStorage".into());
+                                            is_recon
+                                        } else {
+                                            false
+                                        };
+                                        // Update drawer status bar with session
+                                        update_drawer_session(id, is_reconnection);
+                                        
+                                        // Request CWD info for status drawer
+                                        let cwd_req = rmpv::Value::Array(vec![
+                                            rmpv::Value::Integer(0.into()),  // Type 0 = RPC request
+                                            rmpv::Value::Integer(2.into()),  // Request ID (2 for cwd_info)
+                                            rmpv::Value::String("get_cwd_info".into()),
+                                            rmpv::Value::Array(vec![]),      // No params
+                                        ]);
+                                        let mut cwd_bytes = Vec::new();
+                                        if rmpv::encode::write_value(&mut cwd_bytes, &cwd_req).is_ok() {
+                                            let _ = ws_rpc.send_with_u8_array(&cwd_bytes);
+                                            web_sys::console::log_1(&"CWD INFO: Requested from host".into());
                                         }
-                                        return; // Session message handled, don't process as redraw
+                                        
+                                        return; // Session message handled
                                     }
                                 }
                             }
@@ -305,8 +629,42 @@ pub fn start() -> Result<(), JsValue> {
                     }
                 }
                 
-                // Not a session message, process as redraw
-                apply_redraw(&mut grid_msg.borrow_mut(), &mut highlights_msg.borrow_mut(), &msg);
+                // Check for cwd_info push message: ["cwd_info", {cwd, file, backend, git_branch}]
+                if let rmpv::Value::Array(ref arr) = msg {
+                    if arr.len() >= 2 {
+                        if let rmpv::Value::String(ref method) = arr[0] {
+                            if method.as_str() == Some("cwd_info") {
+                                if let rmpv::Value::Map(ref info_map) = arr[1] {
+                                    let mut cwd = String::new();
+                                    let mut file = String::new();
+                                    let mut backend = "local".to_string();
+                                    let mut git_branch: Option<String> = None;
+                                    
+                                    for (key, value) in info_map {
+                                        match key.as_str() {
+                                            Some("cwd") => cwd = value.as_str().unwrap_or("~").to_string(),
+                                            Some("file") => file = value.as_str().unwrap_or("").to_string(),
+                                            Some("backend") => backend = value.as_str().unwrap_or("local").to_string(),
+                                            Some("git_branch") => git_branch = value.as_str().map(|s| s.to_string()),
+                                            _ => {}
+                                        }
+                                    }
+                                    
+                                    web_sys::console::log_1(&format!(
+                                        "CWD PUSH: backend={} cwd={} file={} git={:?}",
+                                        backend, cwd, file, git_branch
+                                    ).into());
+                                    
+                                    update_drawer_cwd_info(&cwd, &file, &backend, git_branch.as_deref());
+                                    return; // CWD info handled
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Not a session/cwd message, process as redraw
+                apply_redraw(&mut grids_msg.borrow_mut(), &mut highlights_msg.borrow_mut(), &msg);
                 
                 // Schedule render via RAF (batched, at most once per frame)
                 render_state_msg.request_render();
@@ -318,7 +676,7 @@ pub fn start() -> Result<(), JsValue> {
     onmessage.forget();
 
     // D1.1: ResizeObserver for window resize handling
-    let grid_resize = grid.clone();
+    let grids_resize = grids.clone();
     let renderer_resize = renderer.clone();
     let render_state_resize = render_state.clone();
     let ws_resize = ws.clone();
@@ -333,7 +691,7 @@ pub fn start() -> Result<(), JsValue> {
                 let (new_rows, new_cols) = renderer_resize.resize(css_width, css_height);
 
                 // Update grid dimensions
-                grid_resize.borrow_mut().resize(new_rows, new_cols);
+                grids_resize.borrow_mut().resize_grid(1, new_rows, new_cols);
 
                 // D1.2: Send ui_try_resize to Neovim
                 let msg = rmpv::Value::Array(vec![
@@ -364,6 +722,18 @@ pub fn start() -> Result<(), JsValue> {
 
     // Phase 9.1.2: Input queue for decoupled, FIFO input handling
     let input_queue = InputQueue::new(ws.clone());
+    
+    // Expose input function to JavaScript for drawer Quick Actions
+    let input_queue_js = input_queue.clone();
+    let nvim_input_fn = Closure::wrap(Box::new(move |cmd: String| {
+        input_queue_js.send_key(&cmd);
+    }) as Box<dyn FnMut(String)>);
+    let _ = js_sys::Reflect::set(
+        &window().unwrap(),
+        &"__nvim_input".into(),
+        nvim_input_fn.as_ref(),
+    );
+    nvim_input_fn.forget();
 
     // Handle keyboard input - attach to wrapper, not canvas
     let input_queue_key = input_queue.clone();
@@ -430,14 +800,69 @@ pub fn start() -> Result<(), JsValue> {
     editor_root.add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())?;
     keydown.forget();
 
+    // IME composition support for CJK input
+    let input_queue_compose = input_queue.clone();
+    let compositionend = Closure::wrap(Box::new(move |e: web_sys::Event| {
+        // Get composed text via JS reflection
+        if let Ok(data) = js_sys::Reflect::get(&e, &"data".into()) {
+            if let Some(text) = data.as_string() {
+                if !text.is_empty() {
+                    web_sys::console::log_1(&format!("IME: Composed text: {}", text).into());
+                    input_queue_compose.send_key(&text);
+                    set_dirty(true);
+                }
+            }
+        }
+    }) as Box<dyn FnMut(_)>);
+    
+    // Attach to hidden textarea for IME events
+    if let Some(document) = window().and_then(|w| w.document()) {
+        if let Some(input_el) = document.get_element_by_id("nvim-input") {
+            let _ = input_el.add_event_listener_with_callback("compositionend", compositionend.as_ref().unchecked_ref());
+        }
+    }
+    compositionend.forget();
+
+    // Also handle regular input events from textarea (for paste, etc.)
+    let input_queue_input = input_queue.clone();
+    let oninput = Closure::wrap(Box::new(move |e: web_sys::Event| {
+        // Check if composing via JS reflection
+        let is_composing = js_sys::Reflect::get(&e, &"isComposing".into())
+            .map(|v| v.as_bool().unwrap_or(false))
+            .unwrap_or(false);
+        
+        if !is_composing {
+            if let Ok(data) = js_sys::Reflect::get(&e, &"data".into()) {
+                if let Some(text) = data.as_string() {
+                    if !text.is_empty() {
+                        input_queue_input.send_key(&text);
+                        set_dirty(true);
+                    }
+                }
+            }
+        }
+        // Clear the textarea via JS reflection
+        if let Some(target) = e.target() {
+            let _ = js_sys::Reflect::set(&target, &"value".into(), &"".into());
+        }
+    }) as Box<dyn FnMut(_)>);
+    
+    if let Some(document) = window().and_then(|w| w.document()) {
+        if let Some(input_el) = document.get_element_by_id("nvim-input") {
+            let _ = input_el.add_event_listener_with_callback("input", oninput.as_ref().unchecked_ref());
+        }
+    }
+    oninput.forget();
+
     // Phase 9.3: Mouse support - click to position cursor
     let input_queue_mouse = input_queue.clone();
     let renderer_mouse = renderer.clone();
     let canvas_mouse = canvas.clone();
     let editor_root_click = editor_root.clone();
     let onmousedown = Closure::wrap(Box::new(move |e: web_sys::MouseEvent| {
-        // Focus the editor
+        // Focus the editor and hidden textarea for IME
         let _ = editor_root_click.focus();
+        focus_input();
         
         // Get click position relative to canvas (cast to Element for getBoundingClientRect)
         let canvas_element: &web_sys::Element = canvas_mouse.as_ref();
@@ -488,22 +913,26 @@ pub fn start() -> Result<(), JsValue> {
     web_sys::console::log_1(&"EDITOR FOCUS INITIALIZED".into());
 
     // Focus/blur detection for visual feedback
-    let grid_focus = grid.clone();
+    let grids_focus = grids.clone();
     let render_state_focus = render_state.clone();
     let onfocus = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
         web_sys::console::log_1(&"FOCUS EVENT".into());
-        grid_focus.borrow_mut().is_focused = true;
+        if let Some(grid) = grids_focus.borrow_mut().main_grid_mut() {
+            grid.is_focused = true;
+        }
         render_state_focus.render_now();
     }) as Box<dyn FnMut(_)>);
     
     editor_root.add_event_listener_with_callback("focus", onfocus.as_ref().unchecked_ref())?;
     onfocus.forget();
 
-    let grid_blur = grid.clone();
+    let grids_blur = grids.clone();
     let render_state_blur = render_state.clone();
     let onblur = Closure::wrap(Box::new(move |_: web_sys::FocusEvent| {
         web_sys::console::log_1(&"BLUR EVENT".into());
-        grid_blur.borrow_mut().is_focused = false;
+        if let Some(grid) = grids_blur.borrow_mut().main_grid_mut() {
+            grid.is_focused = false;
+        }
         render_state_blur.render_now();
     }) as Box<dyn FnMut(_)>);
     
@@ -549,8 +978,9 @@ pub fn start() -> Result<(), JsValue> {
     let ontouchstart = Closure::wrap(Box::new(move |e: web_sys::TouchEvent| {
         e.prevent_default();
         
-        // Focus editor
+        // Focus editor and hidden textarea for mobile keyboard
         let _ = editor_root_touch.focus();
+        focus_input();
         
         if let Some(touch) = e.touches().get(0) {
             // Get touch position relative to canvas
@@ -577,195 +1007,3 @@ pub fn start() -> Result<(), JsValue> {
 
     Ok(())
 }
-
-// Apply redraw events to grid
-fn apply_redraw(grid: &mut Grid, highlights: &mut HighlightMap, msg: &rmpv::Value) {
-    if let rmpv::Value::Array(arr) = msg {
-        // Message format: [2, "redraw", [[event, ...args]...]]
-        if arr.len() >= 3 {
-            if let rmpv::Value::Array(events) = &arr[2] {
-                for event in events {
-                    if let rmpv::Value::Array(ev) = event {
-                        if ev.is_empty() { continue; }
-                        
-                        if let rmpv::Value::String(name) = &ev[0] {
-                            match name.as_str() {
-                                Some("hl_attr_define") => {
-                                    // Batched: ["hl_attr_define", [id, rgb_attr, ...], [id, rgb_attr, ...], ...]
-                                    for call in &ev[1..] {
-                                        if let rmpv::Value::Array(args) = call {
-                                            if args.len() >= 2 {
-                                                if let rmpv::Value::Integer(id) = &args[0] {
-                                                    let hl_id = id.as_u64().unwrap_or(0) as u32;
-                                                    let attr = parse_hl_attr(&args[1]);
-                                                    highlights.define(hl_id, attr);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Some("grid_line") => {
-                                    // Neovim batched event format:
-                                    // ["grid_line", [grid, row, col, cells], [grid, row, col, cells], ...]
-                                    // Each ev[1..] is a separate call with [grid, row, col_start, cells]
-                                    for call in &ev[1..] {
-                                        if let rmpv::Value::Array(args) = call {
-                                            if args.len() >= 4 {
-                                                if let (
-                                                    rmpv::Value::Integer(_grid_id),
-                                                    rmpv::Value::Integer(row),
-                                                    rmpv::Value::Integer(col_start),
-                                                    rmpv::Value::Array(cells)
-                                                ) = (&args[0], &args[1], &args[2], &args[3]) {
-                                                    let row = row.as_u64().unwrap_or(0) as usize;
-                                                    let mut col = col_start.as_u64().unwrap_or(0) as usize;
-                                                    let mut last_hl_id: Option<u32> = None;
-                                                    
-                                                    for cell in cells {
-                                                        if let rmpv::Value::Array(cell_data) = cell {
-                                                            if cell_data.is_empty() { continue; }
-                                                            
-                                                            // Extract text (first element)
-                                                            let text = if let rmpv::Value::String(s) = &cell_data[0] {
-                                                                s.as_str().unwrap_or("")
-                                                            } else {
-                                                                ""
-                                                            };
-                                                            
-                                                            // Extract hl_id (second element, optional)
-                                                            // If not present, use last_hl_id (sticky highlight)
-                                                            let hl_id = if cell_data.len() >= 2 {
-                                                                if let rmpv::Value::Integer(h) = &cell_data[1] {
-                                                                    let id = Some(h.as_u64().unwrap_or(0) as u32);
-                                                                    last_hl_id = id;
-                                                                    id
-                                                                } else {
-                                                                    last_hl_id
-                                                                }
-                                                            } else {
-                                                                last_hl_id
-                                                            };
-                                                            
-                                                            // Extract repeat count (third element, defaults to 1)
-                                                            let repeat = if cell_data.len() >= 3 {
-                                                                if let rmpv::Value::Integer(r) = &cell_data[2] {
-                                                                    r.as_u64().unwrap_or(1) as usize
-                                                                } else {
-                                                                    1
-                                                                }
-                                                            } else {
-                                                                1
-                                                            };
-                                                            
-                                                            // Handle empty string as space (Neovim convention)
-                                                            let ch = if text.is_empty() {
-                                                                ' '
-                                                            } else {
-                                                                text.chars().next().unwrap_or(' ')
-                                                            };
-                                                            
-                                                            // Repeat character for repeat count (hl_id applies to all)
-                                                            for _ in 0..repeat {
-                                                                if col < grid.cols {
-                                                                    grid.set_with_hl(row, col, ch, hl_id);
-                                                                    col += 1;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Some("grid_cursor_goto") => {
-                                    // Batched: ["grid_cursor_goto", [grid, row, col], ...]
-                                    for call in &ev[1..] {
-                                        if let rmpv::Value::Array(args) = call {
-                                            if args.len() >= 3 {
-                                                if let (
-                                                    rmpv::Value::Integer(_grid),
-                                                    rmpv::Value::Integer(row),
-                                                    rmpv::Value::Integer(col)
-                                                ) = (&args[0], &args[1], &args[2]) {
-                                                    grid.cursor_row = row.as_u64().unwrap_or(0) as usize;
-                                                    grid.cursor_col = col.as_u64().unwrap_or(0) as usize;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Some("grid_clear") => {
-                                    // Batched: ["grid_clear", [grid], ...]
-                                    // For now, just clear on any call
-                                    if ev.len() > 1 {
-                                        for cell in &mut grid.cells {
-                                            cell.ch = ' ';
-                                            cell.hl_id = None;
-                                        }
-                                    }
-                                }
-                                Some("grid_resize") => {
-                                    // Batched: ["grid_resize", [grid, width, height], ...]
-                                    for call in &ev[1..] {
-                                        if let rmpv::Value::Array(args) = call {
-                                            if args.len() >= 3 {
-                                                if let (
-                                                    rmpv::Value::Integer(_grid),
-                                                    rmpv::Value::Integer(width),
-                                                    rmpv::Value::Integer(height)
-                                                ) = (&args[0], &args[1], &args[2]) {
-                                                    let new_cols = width.as_u64().unwrap_or(80) as usize;
-                                                    let new_rows = height.as_u64().unwrap_or(24) as usize;
-                                                    grid.resize(new_rows, new_cols);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {} // Ignore unsupported events for now
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Parse highlight attributes from msgpack map
-fn parse_hl_attr(value: &rmpv::Value) -> HighlightAttr {
-    let mut attr = HighlightAttr::default();
-    
-    if let rmpv::Value::Map(map) = value {
-        for (key, val) in map {
-            if let rmpv::Value::String(k) = key {
-                match k.as_str() {
-                    Some("foreground") => {
-                        if let rmpv::Value::Integer(i) = val {
-                            attr.fg = Some(i.as_u64().unwrap_or(0) as u32);
-                        }
-                    }
-                    Some("background") => {
-                        if let rmpv::Value::Integer(i) = val {
-                            attr.bg = Some(i.as_u64().unwrap_or(0) as u32);
-                        }
-                    }
-                    Some("bold") => {
-                        attr.bold = matches!(val, rmpv::Value::Boolean(true));
-                    }
-                    Some("italic") => {
-                        attr.italic = matches!(val, rmpv::Value::Boolean(true));
-                    }
-                    Some("underline") => {
-                        attr.underline = matches!(val, rmpv::Value::Boolean(true));
-                    }
-                    _ => {} // Ignore other attributes for now
-                }
-            }
-        }
-    }
-    
-    attr
-}
-

@@ -9,20 +9,20 @@ pub mod ws;
 pub mod vfs;
 pub mod vfs_handlers;
 
-// Connection management
-pub mod connection_manager;
-
 // Configuration
 pub mod config;
 
 // REST API
 pub mod api;
 
-// Multi-seat collaboration
-pub mod collaboration;
+// Settings persistence
+pub mod settings;
 
-// Security hardening
-pub mod security;
+// Git utilities
+pub mod git;
 
-// Utilities
-pub mod debug;
+// Embedded UI assets (single-binary distribution)
+pub mod embedded;
+
+// Project configuration and magic link handling
+pub mod project;

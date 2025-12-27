@@ -113,6 +113,80 @@ async fn handle_request(
             }
         }
 
+        // Open project (magic link) - generate token
+        // POST /api/open with body: {"path":"/abs/path"}
+        ("POST", "/api/open") => {
+            // Parse JSON body
+            let body_start = request.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+            let body = &request[body_start..];
+            
+            // Simple JSON parsing for path
+            let path = body
+                .split('"')
+                .enumerate()
+                .find(|(i, s)| *i % 4 == 1 && *s == "path")
+                .and_then(|_| body.split('"').nth(3))
+                .unwrap_or("");
+            
+            if path.is_empty() {
+                return http_response(400, "Bad Request", "application/json", 
+                    r#"{"error":"path is required"}"#);
+            }
+            
+            let abs_path = std::path::PathBuf::from(path);
+            if !abs_path.exists() {
+                return http_response(404, "Not Found", "application/json",
+                    r#"{"error":"path does not exist"}"#);
+            }
+            
+            let abs_path = abs_path.canonicalize().unwrap_or(abs_path);
+            let config = crate::project::ProjectConfig::load(&abs_path);
+            let name = config.display_name(&abs_path);
+            let token = crate::project::store_token(abs_path.clone(), config);
+            
+            json_response(&format!(
+                r#"{{"token":"{}","name":"{}","path":"{}","url":"http://localhost:8080/?open={}"}}"#,
+                token, name, abs_path.display(), token
+            ))
+        }
+
+        // Claim token - exchange for session info
+        ("GET", path) if path.starts_with("/api/claim/") => {
+            let token = &path["/api/claim/".len()..];
+            
+            match crate::project::claim_token(token) {
+                Some((path, config)) => {
+                    let name = config.display_name(&path);
+                    let cwd = config.resolved_cwd(&path);
+                    let init_file = config.editor.init_file.clone().unwrap_or_default();
+                    
+                    json_response(&format!(
+                        r#"{{"path":"{}","name":"{}","cwd":"{}","init_file":"{}"}}"#,
+                        path.display(), name, cwd.display(), init_file
+                    ))
+                }
+                None => http_response(404, "Not Found", "application/json",
+                    r#"{"error":"token invalid or expired"}"#),
+            }
+        }
+
+        // Get token info (without claiming)
+        ("GET", path) if path.starts_with("/api/token/") => {
+            let token = &path["/api/token/".len()..];
+            
+            match crate::project::get_token_info(token) {
+                Some((path, config, claimed)) => {
+                    let name = config.display_name(&path);
+                    json_response(&format!(
+                        r#"{{"path":"{}","name":"{}","claimed":{}}}"#,
+                        path.display(), name, claimed
+                    ))
+                }
+                None => http_response(404, "Not Found", "application/json",
+                    r#"{"error":"token not found"}"#),
+            }
+        }
+
         // CORS preflight
         ("OPTIONS", _) => {
             "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n".to_string()
