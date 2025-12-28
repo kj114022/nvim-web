@@ -334,9 +334,9 @@ async fn main() -> anyhow::Result<()> {
     let session_manager_shutdown = session_manager.clone();
 
     // Create VFS manager with local filesystem backend
-    let mut vfs = VfsManager::new();
+    let vfs = VfsManager::new();
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    vfs.register_backend("local", Box::new(LocalFs::new(&home_dir)));
+    vfs.register_backend("local", Box::new(LocalFs::new(&home_dir))).await;
     let vfs_manager = Arc::new(RwLock::new(vfs));
     eprintln!(
         "  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {home_dir})"

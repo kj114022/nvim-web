@@ -400,9 +400,9 @@ async fn handle_browser_message(
 
                         let vfs = vfs_manager.as_ref().unwrap().read().await;
                         // Use the "local" backend for now
-                        if let Some(backend) = vfs.get_backend("local") {
+                        if let Ok(backend) = vfs.get_backend("local").await {
                             Some(
-                                match vfs_handlers::handle_list_tree(path, depth, backend).await {
+                                match vfs_handlers::handle_list_tree(path, depth, backend.as_ref()).await {
                                     Ok(tree) => (Value::Nil, vfs_handlers::tree_to_value(&tree)),
                                     Err(e) => (Value::String(e.to_string().into()), Value::Nil),
                                 },
