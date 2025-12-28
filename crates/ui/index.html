@@ -710,6 +710,67 @@
       color: #ff5555;
     }
 
+    /* Image Preview Modal */
+    #image-preview-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.95);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10001;
+      backdrop-filter: blur(8px);
+      cursor: zoom-out;
+    }
+
+    #image-preview-modal.hidden {
+      display: none;
+    }
+
+    #image-preview-modal img {
+      max-width: 90vw;
+      max-height: 90vh;
+      object-fit: contain;
+      border-radius: 4px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    #image-preview-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #fff;
+      font-size: 24px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    #image-preview-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(1.1);
+    }
+
+    #image-preview-filename {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+
     /* Onboarding Modal */
     #nvim-onboarding {
       position: fixed;
@@ -977,6 +1038,13 @@
 </head>
 
 <body>
+  <!-- Image Preview Modal -->
+  <div id="image-preview-modal" class="hidden">
+    <button id="image-preview-close">&times;</button>
+    <img id="image-preview-img" src="" alt="Preview">
+    <div id="image-preview-filename"></div>
+  </div>
+
   <!-- Onboarding Modal (first-run) -->
   <div id="nvim-onboarding" class="hidden">
     <div class="onboarding-box">
@@ -1177,6 +1245,53 @@
         window.dispatchEvent(new CustomEvent('vfs-open-file', { 
           detail: { name: file.name, content } 
         }));
+      }
+    });
+
+    // === IMAGE PREVIEW MODAL ===
+    const imageModal = document.getElementById('image-preview-modal');
+    const imagePreviewImg = document.getElementById('image-preview-img');
+    const imagePreviewFilename = document.getElementById('image-preview-filename');
+    const imagePreviewClose = document.getElementById('image-preview-close');
+
+    function showImagePreview(src, filename) {
+      imagePreviewImg.src = src;
+      imagePreviewFilename.textContent = filename || 'Image Preview';
+      imageModal.classList.remove('hidden');
+    }
+
+    function hideImagePreview() {
+      imageModal.classList.add('hidden');
+      imagePreviewImg.src = '';
+    }
+
+    // Export for global access
+    window.showImagePreview = showImagePreview;
+    window.hideImagePreview = hideImagePreview;
+
+    // Close on click anywhere
+    imageModal.addEventListener('click', (e) => {
+      if (e.target === imageModal || e.target === imagePreviewImg) {
+        hideImagePreview();
+      }
+    });
+
+    imagePreviewClose.addEventListener('click', hideImagePreview);
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !imageModal.classList.contains('hidden')) {
+        hideImagePreview();
+      }
+    });
+
+    // Detect image files from dropped files/URLs
+    window.addEventListener('vfs-open-file', (e) => {
+      const { name } = e.detail;
+      const ext = name.split('.').pop().toLowerCase();
+      if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+        // If it's a dropped file, create blob URL and show
+        // For now, we'll handle image URLs directly
       }
     });
 
