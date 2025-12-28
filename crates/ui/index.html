@@ -279,6 +279,84 @@
       color: #858585;
     }
 
+    /* Offline Indicator */
+    .drawer-item.offline {
+      color: #ff5555;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .drawer-item.offline.hidden {
+      display: none;
+    }
+
+    .offline-icon {
+      font-size: 14px;
+    }
+
+    .status-offline {
+      background: #ff5555 !important;
+      animation: offlinePulse 1s infinite;
+    }
+
+    @keyframes offlinePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Macro Recording Indicator */
+    .drawer-item.macro {
+      color: #ff5555;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .drawer-item.macro.hidden {
+      display: none;
+    }
+
+    .macro-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff5555;
+      animation: macroPulse 0.8s ease-in-out infinite;
+    }
+
+    .macro-reg {
+      font-weight: bold;
+    }
+
+    @keyframes macroPulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+    }
+
+    /* Install Button */
+    .drawer-item.install {
+      background: linear-gradient(135deg, #89b4fa, #b4befe);
+      color: #1e1e2e;
+      border: none;
+      padding: 2px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .drawer-item.install:hover {
+      background: linear-gradient(135deg, #b4befe, #cba6f7);
+      transform: scale(1.05);
+    }
+
+    .drawer-item.install.hidden {
+      display: none;
+    }
+
     .drawer-sep {
       color: #555;
     }
@@ -977,6 +1055,17 @@
       <span class="drawer-item modified" id="drawer-modified" style="display:none" title="Unsaved Changes">*</span>
       <span class="drawer-item git" id="drawer-git" title="Git Branch"></span>
       <span class="drawer-spacer"></span>
+      <div id="offline-indicator" class="drawer-item offline hidden" title="Offline Mode">
+        <span class="offline-icon">&#9888;</span>
+        <span>OFFLINE</span>
+      </div>
+      <div id="macro-indicator" class="drawer-item macro hidden" title="Recording Macro">
+        <span class="macro-dot"></span>
+        <span class="macro-reg">@q</span>
+      </div>
+      <button id="install-app-btn" class="drawer-item install hidden" onclick="installApp()" title="Install App">
+        Install
+      </button>
       <span class="drawer-item session" id="drawer-session" title="Session ID">session: -</span>
       <button class="drawer-toggle" id="drawer-toggle" title="Toggle Panel">&#9650;</button>
     </div>
@@ -995,10 +1084,101 @@
 
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then(reg => console.log('SW registered:', reg.scope))
-        .catch(err => console.log('SW registration failed:', err));
+      const swReg = await navigator.serviceWorker.register('/sw.js');
+      console.log('SW registered:', swReg.scope);
+      
+      // Listen for updates
+      swReg.addEventListener('updatefound', () => {
+        const newWorker = swReg.installing;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // New version available
+            if (confirm('New version available! Reload to update?')) {
+              newWorker.postMessage({ type: 'SKIP_WAITING' });
+              window.location.reload();
+            }
+          }
+        });
+      });
+      
+      // Listen for SW messages
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data.type === 'SYNC_WRITES') {
+          console.log('SW requested sync');
+          // Trigger sync in fs_driver
+          window.dispatchEvent(new CustomEvent('vfs-sync-requested'));
+        }
+        if (event.data.type === 'ONLINE_STATUS') {
+          updateOfflineIndicator(!event.data.online);
+        }
+      });
     }
+    
+    // Offline detection
+    let isOffline = !navigator.onLine;
+    function updateOfflineIndicator(offline) {
+      isOffline = offline;
+      const indicator = document.getElementById('offline-indicator');
+      if (indicator) {
+        indicator.classList.toggle('hidden', !offline);
+      }
+      // Also update connection status dot
+      const status = document.getElementById('nvim-status');
+      if (status && offline) {
+        status.classList.remove('status-connected');
+        status.classList.add('status-offline');
+      }
+    }
+    
+    window.addEventListener('online', () => updateOfflineIndicator(false));
+    window.addEventListener('offline', () => updateOfflineIndicator(true));
+    updateOfflineIndicator(!navigator.onLine);
+    
+    // PWA Install Prompt
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      // Show install button
+      const installBtn = document.getElementById('install-app-btn');
+      if (installBtn) installBtn.classList.remove('hidden');
+    });
+    
+    window.installApp = async function() {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('Install prompt outcome:', outcome);
+      deferredPrompt = null;
+      const installBtn = document.getElementById('install-app-btn');
+      if (installBtn) installBtn.classList.add('hidden');
+    };
+    
+    // Drag-drop URL support
+    document.getElementById('editor-root').addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    
+    document.getElementById('editor-root').addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+        console.log('Dropped URL:', url);
+        // Fetch via HTTP VFS backend - dispatch event for Rust/WASM to handle
+        window.dispatchEvent(new CustomEvent('vfs-open-url', { detail: { url } }));
+      }
+      
+      // Handle dropped files
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        const file = files[0];
+        const content = await file.text();
+        window.dispatchEvent(new CustomEvent('vfs-open-file', { 
+          detail: { name: file.name, content } 
+        }));
+      }
+    });
 
     // === ONBOARDING MODAL ===
     const onboardingModal = document.getElementById('nvim-onboarding');
