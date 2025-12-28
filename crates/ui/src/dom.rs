@@ -1,6 +1,11 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{window, Document};
+use web_sys::{window, Document, ResizeObserver, ResizeObserverEntry, HtmlCanvasElement, WebSocket};
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::grid::GridManager;
+use crate::renderer::Renderer;
+use crate::render::RenderState;
 
 /// Get document helper
 fn get_document() -> Option<Document> {
@@ -122,4 +127,56 @@ pub fn update_drawer_cwd_info(cwd: &str, file: &str, backend: &str, git_branch: 
             }
         }
     }
+}
+
+
+
+/// Setup ResizeObserver for the canvas
+pub fn setup_resize_listener(
+    canvas: &HtmlCanvasElement,
+    grids: Rc<RefCell<GridManager>>,
+    renderer: Rc<Renderer>,
+    render_state: Rc<RenderState>,
+    ws: &WebSocket,
+) -> Result<(), JsValue> {
+    let grids_resize = grids.clone();
+    let renderer_resize = renderer.clone();
+    let render_state_resize = render_state.clone();
+    let ws_resize = ws.clone();
+    
+    let resize_callback = Closure::wrap(Box::new(move |entries: js_sys::Array| {
+        for i in 0..entries.length() {
+            if let Ok(entry) = entries.get(i).dyn_into::<ResizeObserverEntry>() {
+                let rect = entry.content_rect();
+                let css_width = rect.width();
+                let css_height = rect.height();
+
+                // D1 + D2: Resize canvas with HiDPI handling
+                let (new_rows, new_cols) = renderer_resize.resize(css_width, css_height);
+
+                // Update grid dimensions
+                grids_resize.borrow_mut().resize_grid(1, new_rows, new_cols);
+
+                // D1.2: Send ui_try_resize to Neovim
+                let msg = rmpv::Value::Array(vec![
+                    rmpv::Value::String("resize".into()),
+                    rmpv::Value::Integer((new_cols as i64).into()),
+                    rmpv::Value::Integer((new_rows as i64).into()),
+                ]);
+                let mut bytes = Vec::new();
+                if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                    let _ = ws_resize.send_with_u8_array(&bytes);
+                }
+
+                // D1.3: Immediate full redraw (resize is special)
+                render_state_resize.render_now();
+            }
+        }
+    }) as Box<dyn FnMut(_)>);
+
+    let observer = ResizeObserver::new(resize_callback.as_ref().unchecked_ref())?;
+    observer.observe(canvas);
+    resize_callback.forget();
+    
+    Ok(())
 }
