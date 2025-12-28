@@ -37,6 +37,7 @@ toml = "0.8"
 nvim-rs = { version = "0.9", features = ["use_tokio"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
+nvim-web-protocol = { path = "../protocol" }
 
 [dev-dependencies]
 tempfile = "3"
@@ -55,3 +56,5 @@ path = "src/main.rs"
 [[bin]]
 name = "nvim-web"
 path = "src/bin/cli.rs"
+
+

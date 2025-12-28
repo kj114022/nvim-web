@@ -1,0 +1,18 @@
+[package]
+name = "nvim-web-protocol"
+description = "Shared protocol types for nvim-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+rmpv.workspace = true
+rmp-serde.workspace = true
+serde_json.workspace = true
+tokio-tungstenite.workspace = true  # Re-export Message type
+tungstenite.workspace = true
+
+[lints]
+workspace = true

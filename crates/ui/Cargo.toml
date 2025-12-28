@@ -15,6 +15,7 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 rmpv.workspace = true
+nvim-web-protocol = { path = "../protocol" }
 
 [dependencies.web-sys]
 workspace = true
@@ -63,3 +64,5 @@ features = [
 
 [lints]
 workspace = true
+
+

@@ -988,6 +988,7 @@ dependencies = [
  "lazy_static",
  "mime_guess",
  "nvim-rs",
+ "nvim-web-protocol",
  "rand",
  "reqwest",
  "rmp-serde",
@@ -1006,10 +1007,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvim-web-protocol"
+version = "0.1.0"
+dependencies = [
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "tokio-tungstenite",
+ "tungstenite",
+]
+
+[[package]]
 name = "nvim-web-ui"
 version = "0.1.0"
 dependencies = [
  "js-sys",
+ "nvim-web-protocol",
  "rmpv",
  "wasm-bindgen",
  "wasm-bindgen-futures",
