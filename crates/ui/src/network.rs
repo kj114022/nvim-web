@@ -79,7 +79,7 @@ pub fn setup_websocket(
     onmessage.forget();
     
     // ON ERROR
-    let onerror = Closure::wrap(Box::new(move |e: ErrorEvent| {
+    let onerror = Closure::wrap(Box::new(move |_e: ErrorEvent| {
         web_sys::console::error_1(&"WS ERROR".into());
         set_status("disconnected");
         show_toast("Connection error");

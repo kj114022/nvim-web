@@ -76,7 +76,7 @@ impl Renderer {
     }
 
     /// Get cell dimensions for row/col calculation
-    pub fn cell_size(&self) -> (f64, f64) {
+    pub const fn cell_size(&self) -> (f64, f64) {
         (self.cell_w, self.cell_h)
     }
 
@@ -109,20 +109,21 @@ impl Renderer {
 
     #[allow(deprecated)]  // web-sys set_fill_style deprecation is overzealous
     #[allow(dead_code)]
+    #[allow(clippy::cast_precision_loss)] // Canvas API requires f64, generic logic uses f64, but some sources are u32
     pub fn draw(&self, grid: &Grid, highlights: &HighlightMap) {
-        let _grid_width = (grid.cols as f64) * self.cell_w;
-        let _grid_height = (grid.rows as f64) * self.cell_h;
+        let _ = (grid.cols as f64) * self.cell_w;
+        let _ = (grid.rows as f64) * self.cell_h;
         
         // Get actual canvas dimensions (CSS pixels, accounting for transform)
         let canvas_width = self.canvas.width() as f64 / self.dpr;
         let canvas_height = self.canvas.height() as f64 / self.dpr;
 
-        // Step 1: Clear entire canvas with default background
+        // Clear entire canvas with default background
         // This prevents artifacts outside the grid area
         self.ctx.set_fill_style(&DEFAULT_BG.into());
         self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
 
-        // Step 2: Per-cell background and text rendering
+        // Per-cell background and text rendering
         // We batch by going through all cells, drawing bg then text per-cell
         // This is less optimal than pure batching but necessary for per-cell colors
         for row in 0..grid.rows {
@@ -191,9 +192,9 @@ impl Renderer {
                     };
                     
                     // Apply text styles (bold/italic)
-                    let bold = hl.map_or(false, |h| h.bold);
-                    let italic = hl.map_or(false, |h| h.italic);
-                    let underline = hl.map_or(false, |h| h.underline);
+                    let bold = hl.is_some_and(|h| h.bold);
+                    let italic = hl.is_some_and(|h| h.italic);
+                    let underline = hl.is_some_and(|h| h.underline);
                     
                     let font = match (bold, italic) {
                         (true, true) => "bold italic 14px monospace",
@@ -227,7 +228,7 @@ impl Renderer {
             }
         }
 
-        // Step 3: Cursor (on top of everything except focus overlay)
+        // Cursor (on top of everything except focus overlay)
         self.ctx.set_fill_style(&CURSOR_COLOR.into());
         self.ctx.fill_rect(
             (grid.cursor_col as f64) * self.cell_w,
@@ -236,7 +237,7 @@ impl Renderer {
             self.cell_h,
         );
 
-        // Step 4: Focus overlay (after all drawing, if unfocused)
+        // Focus overlay (after all drawing, if unfocused)
         if !grid.is_focused {
             self.ctx.set_fill_style(&FOCUS_LOST_OVERLAY.into());
             self.ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
@@ -245,6 +246,7 @@ impl Renderer {
 
     /// Draw all grids in z-order (for multigrid support)
     #[allow(deprecated)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn draw_all(&self, grids: &GridManager, highlights: &HighlightMap) {
         let canvas_width = self.canvas.width() as f64 / self.dpr;
         let canvas_height = self.canvas.height() as f64 / self.dpr;
@@ -272,6 +274,7 @@ impl Renderer {
     /// Draw a single grid at its offset position
     /// Simplified for single-grid mode (multigrid disabled)
     #[allow(deprecated)]
+    #[allow(clippy::cast_precision_loss)]
     fn draw_grid_at_offset(&self, grid: &Grid, highlights: &HighlightMap) {
         // In single-grid mode, just draw at (0,0)
         // Grid offsets are only used when multigrid is enabled
@@ -294,8 +297,8 @@ impl Renderer {
         for row in 0..grid.rows {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
-                let x = offset_x + (col as f64) * self.cell_w;
-                let y = offset_y + (row as f64) * self.cell_h;
+                let x = (col as f64).mul_add(self.cell_w, offset_x);
+                let y = (row as f64).mul_add(self.cell_h, offset_y);
                 
                 let hl = cell.hl_id.and_then(|id| highlights.get(id));
                 
@@ -309,7 +312,10 @@ impl Renderer {
                 
                 // Text
                 if cell.ch != ' ' {
-                    let fg_css = hl.and_then(|h| h.fg).map(rgb_to_css).unwrap_or_else(|| DEFAULT_FG.to_string());
+                    let fg_css = hl.and_then(|h| h.fg).map_or_else(
+                        || DEFAULT_FG.to_string(),
+                        rgb_to_css
+                    );
                     self.ctx.set_fill_style(&JsValue::from_str(&fg_css));
                     
                     let mut buf = [0u8; 4];

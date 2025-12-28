@@ -64,7 +64,7 @@ impl Config {
     pub fn load_from_path(path: &PathBuf) -> Option<Self> {
         let content = std::fs::read_to_string(path).ok()?;
 
-        let mut config = Config::default();
+        let mut config = Self::default();
 
         for line in content.lines() {
             let line = line.trim();

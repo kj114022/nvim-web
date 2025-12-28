@@ -1,3 +1,4 @@
+#![allow(clippy::cast_possible_wrap)]
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{window, Document, ResizeObserver, ResizeObserverEntry, HtmlCanvasElement, WebSocket};
@@ -16,7 +17,7 @@ fn get_document() -> Option<Document> {
 pub fn set_status(status: &str) {
     if let Some(doc) = get_document() {
         if let Some(el) = doc.get_element_by_id("nvim-status") {
-            let _ = el.set_class_name(&format!("status-{}", status));
+            el.set_class_name(&format!("status-{status}"));
         }
     }
 }
@@ -29,9 +30,8 @@ pub fn show_toast(message: &str) {
             let _ = el.set_attribute("class", "show");
             
             // Auto-hide after 3 seconds
-            let el_clone = el.clone();
             let callback = Closure::once(Box::new(move || {
-                let _ = el_clone.set_attribute("class", "");
+                let _ = el.set_attribute("class", "");
             }) as Box<dyn FnOnce()>);
             
             if let Some(win) = window() {
@@ -54,7 +54,7 @@ pub fn set_dirty(dirty: bool) {
         }
         // Update page title
         let base_title = "Neovim Web";
-        let new_title = if dirty { format!("* {}", base_title) } else { base_title.to_string() };
+        let new_title = if dirty { format!("* {base_title}") } else { base_title.to_string() };
         doc.set_title(&new_title);
     }
 }
@@ -131,7 +131,7 @@ pub fn update_drawer_cwd_info(cwd: &str, file: &str, backend: &str, git_branch: 
 
 
 
-/// Setup ResizeObserver for the canvas
+/// Setup `ResizeObserver` for the canvas
 pub fn setup_resize_listener(
     canvas: &HtmlCanvasElement,
     grids: Rc<RefCell<GridManager>>,
@@ -139,9 +139,6 @@ pub fn setup_resize_listener(
     render_state: Rc<RenderState>,
     ws: &WebSocket,
 ) -> Result<(), JsValue> {
-    let grids_resize = grids.clone();
-    let renderer_resize = renderer.clone();
-    let render_state_resize = render_state.clone();
     let ws_resize = ws.clone();
     
     let resize_callback = Closure::wrap(Box::new(move |entries: js_sys::Array| {
@@ -152,10 +149,10 @@ pub fn setup_resize_listener(
                 let css_height = rect.height();
 
                 // D1 + D2: Resize canvas with HiDPI handling
-                let (new_rows, new_cols) = renderer_resize.resize(css_width, css_height);
+                let (new_rows, new_cols) = renderer.resize(css_width, css_height);
 
                 // Update grid dimensions
-                grids_resize.borrow_mut().resize_grid(1, new_rows, new_cols);
+                grids.borrow_mut().resize_grid(1, new_rows, new_cols);
 
                 // D1.2: Send ui_try_resize to Neovim
                 let msg = rmpv::Value::Array(vec![
@@ -169,7 +166,7 @@ pub fn setup_resize_listener(
                 }
 
                 // D1.3: Immediate full redraw (resize is special)
-                render_state_resize.render_now();
+                render_state.render_now();
             }
         }
     }) as Box<dyn FnMut(_)>);

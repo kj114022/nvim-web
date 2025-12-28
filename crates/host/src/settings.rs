@@ -1,14 +1,14 @@
-//! Settings persistence using SQLite
+//! Settings persistence using `SQLite`
 //!
 //! Stores nvim-web settings in ~/.config/nvim-web/settings.db
-
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
-
-/// Settings storage backed by SQLite
+ 
+ use std::collections::HashMap;
+ use std::path::PathBuf;
+ 
+ use anyhow::{Context, Result};
+ use rusqlite::{params, Connection};
+ 
+ /// Settings storage backed by `SQLite`
 pub struct SettingsStore {
     conn: Connection,
 }

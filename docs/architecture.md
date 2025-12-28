@@ -188,3 +188,48 @@ sequenceDiagram
 ```
 
 Key: Neovim reader thread persists, channel shared via `Arc<Mutex<>>`.
+
+## Session Management
+
+Sessions persist across browser disconnections via:
+
+1. **URL parameter**: `?session=<id>` - explicit session binding
+2. **localStorage**: Automatic session ID storage
+3. **Host-side manager**: `AsyncSessionManager` maintains session pool
+
+```mermaid
+graph LR
+    Browser -->|session ID| SessionManager
+    SessionManager -->|lookup| Session
+    Session -->|broadcast channel| Neovim
+```
+
+## Native Messaging (Chrome Extension)
+
+For direct browser extension integration:
+
+```mermaid
+sequenceDiagram
+    participant Ext as Chrome Extension
+    participant Host as nvim-web-host
+    participant Nvim as Neovim
+
+    Ext->>Host: stdin JSON message
+    Host->>Host: Parse JSON envelope
+    Host->>Nvim: Forward to Neovim
+    Nvim-->>Host: Response
+    Host-->>Ext: stdout JSON response
+```
+
+Install native messaging manifest:
+```bash
+./scripts/install-native-manifest.sh
+```
+
+## Security Model
+
+- WebSocket bound to `127.0.0.1` only (localhost)
+- Origin validation for allowed origins
+- VFS path sandboxing (prevents traversal attacks)
+- Session tokens for CLI open commands
+

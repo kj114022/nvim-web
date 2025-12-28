@@ -2,9 +2,9 @@
 //!
 //! These handlers integrate the VFS backend with Neovim buffers,
 //! enabling seamless file operations across different storage backends
-//! (LocalFs, SSH, BrowserFs).
+//! (`LocalFs`, SSH, `BrowserFs`).
 //!
-//! The handlers use the async VfsManager to read/write files and
+//! The handlers use the async `VfsManager` to read/write files and
 //! the nvim-rs API to manipulate Neovim buffers.
 
 use anyhow::Result;
@@ -20,11 +20,11 @@ pub struct TreeEntry {
     pub path: String,
     pub is_dir: bool,
     pub size: u64,
-    pub children: Option<Vec<TreeEntry>>,
+    pub children: Option<Vec<Self>>,
 }
 
 impl TreeEntry {
-    /// Convert to MessagePack Value for RPC
+    /// Convert to `MessagePack` Value for RPC
     pub fn to_value(&self) -> Value {
         let mut map = vec![
             (
@@ -43,7 +43,7 @@ impl TreeEntry {
         ];
 
         if let Some(ref children) = self.children {
-            let children_val: Vec<Value> = children.iter().map(|c| c.to_value()).collect();
+            let children_val: Vec<Value> = children.iter().map(Self::to_value).collect();
             map.push((Value::String("children".into()), Value::Array(children_val)));
         }
 
@@ -56,13 +56,13 @@ impl TreeEntry {
 /// Reads file content from VFS backend and loads it into a new Neovim buffer.
 ///
 /// # Arguments
-/// * `vfs_path` - VFS path (e.g., "vfs://local/path/to/file.txt")
+/// * `vfs_path` - VFS path (e.g., `<vfs://local/path/to/file.txt>`)
 /// * `session` - Active Neovim session
 /// * `vfs_manager` - VFS manager with registered backends
 ///
 /// # Protocol
 /// When the browser requests to open a VFS file, this handler:
-/// 1. Reads the file content via VfsManager
+/// 1. Reads the file content via `VfsManager`
 /// 2. Creates a new buffer in Neovim
 /// 3. Sets the buffer content
 /// 4. Returns the buffer number
@@ -89,9 +89,11 @@ pub async fn handle_open_vfs(
         )
         .await?;
 
-    let bufnr = bufnr_result
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("Failed to create buffer"))? as u32;
+    let bufnr = u32::try_from(
+        bufnr_result
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Failed to create buffer"))?,
+    )?;
 
     // Set buffer name to VFS path
     session
@@ -139,7 +141,7 @@ pub async fn handle_open_vfs(
         )
         .await?;
 
-    eprintln!("VFS: Opened {} in buffer {}", vfs_path, bufnr);
+    eprintln!("VFS: Opened {vfs_path} in buffer {bufnr}");
 
     Ok(bufnr)
 }
@@ -176,7 +178,7 @@ pub async fn handle_write_vfs(
     let content = if let Value::Array(lines) = lines_result {
         let text_lines: Vec<String> = lines
             .into_iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter_map(|v| v.as_str().map(ToString::to_string))
             .collect();
         text_lines.join("\n")
     } else {
@@ -198,7 +200,7 @@ pub async fn handle_write_vfs(
         )
         .await?;
 
-    eprintln!("VFS: Wrote buffer {} to {}", bufnr, vfs_path);
+    eprintln!("VFS: Wrote buffer {bufnr} to {vfs_path}");
 
     Ok(())
 }
@@ -221,7 +223,7 @@ pub async fn handle_list_tree(
 
     for name in entries {
         let entry_path = if path == "/" || path.is_empty() {
-            format!("/{}", name)
+            format!("/{name}")
         } else {
             format!("{}/{}", path.trim_end_matches('/'), name)
         };
@@ -262,11 +264,11 @@ pub async fn handle_list_tree(
 
 /// Convert tree entries to Value for RPC response
 pub fn tree_to_value(tree: &[TreeEntry]) -> Value {
-    Value::Array(tree.iter().map(|e| e.to_value()).collect())
+    Value::Array(tree.iter().map(TreeEntry::to_value).collect())
 }
 
 /// VFS status - returns current implementation status
-pub fn vfs_status() -> &'static str {
+pub const fn vfs_status() -> &'static str {
     "VFS handlers are fully async and operational"
 }
 

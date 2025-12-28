@@ -11,6 +11,7 @@ use axum::{
 use nvim_web_host::api;
 use nvim_web_host::config::Config;
 use nvim_web_host::embedded;
+use nvim_web_host::native;
 use nvim_web_host::session::AsyncSessionManager;
 use nvim_web_host::vfs::{LocalFs, VfsManager};
 use nvim_web_host::ws;
@@ -39,7 +40,7 @@ fn print_banner() {
         "  \x1b[1;36m║                                                                   ║\x1b[0m"
     );
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[2;37mNeovim in your browser. No cap.\x1b[0m                                 \x1b[1;36m║\x1b[0m");
-    eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[2;35mBuilt different. Stay chill. Edit code.\x1b[0m v{:<21}\x1b[1;36m║\x1b[0m", VERSION);
+    eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[2;35mBuilt different. Stay chill. Edit code.\x1b[0m v{VERSION:<21}\x1b[1;36m║\x1b[0m");
     eprintln!(
         "  \x1b[1;36m║                                                                   ║\x1b[0m"
     );
@@ -54,17 +55,14 @@ fn print_connection_info(http_port: u16, ws_port: u16, bind: &str, embedded: boo
         eprintln!("  \x1b[1;32m[vibin]\x1b[0m  Single binary mode - all assets embedded");
     }
     eprintln!(
-        "  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{}\x1b[0m",
-        http_port
+        "  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{http_port}\x1b[0m"
     );
     eprintln!(
-        "  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{}\x1b[0m",
-        ws_port
+        "  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{ws_port}\x1b[0m"
     );
     eprintln!();
     eprintln!(
-        "  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{}:{}\x1b[0m",
-        bind, http_port
+        "  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{bind}:{http_port}\x1b[0m"
     );
     eprintln!();
     eprintln!("  \x1b[2mPress Ctrl+C to bounce\x1b[0m");
@@ -73,7 +71,7 @@ fn print_connection_info(http_port: u16, ws_port: u16, bind: &str, embedded: boo
 
 /// Graceful start: Check if port is available
 fn check_port_available(bind: &str, port: u16) -> bool {
-    TcpListener::bind(format!("{}:{}", bind, port)).is_ok()
+    TcpListener::bind(format!("{bind}:{port}")).is_ok()
 }
 
 /// Graceful start: Find available port starting from default
@@ -88,7 +86,7 @@ fn startup_checks() -> Result<(), String> {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout);
             let first_line = version.lines().next().unwrap_or("unknown");
-            eprintln!("  \x1b[1;32m[check]\x1b[0m  Neovim found: {}", first_line);
+            eprintln!("  \x1b[1;32m[check]\x1b[0m  Neovim found: {first_line}");
         }
         _ => {
             return Err("Neovim not found. Please install Neovim first.".to_string());
@@ -108,7 +106,10 @@ async fn serve_static(Path(path): Path<String>) -> Response<Body> {
     match embedded::get_asset(&path) {
         Some((data, mime)) => {
             // Use application/javascript for .js files (override detected mime)
-            let content_type = if path.ends_with(".js") {
+            let content_type = if std::path::Path::new(&path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("js"))
+            {
                 "application/javascript"
             } else {
                 mime
@@ -155,13 +156,13 @@ async fn serve_index() -> Response<Body> {
 }
 
 /// Handle 'nvim-web open [PATH]' command
-async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
+fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
     use nvim_web_host::project::ProjectConfig;
 
     // Get path from args, default to current directory
-    let path_arg = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+    let path_arg = args.get(2).map_or(".", |s| s.as_str());
 
     // Resolve to absolute path
     let path = if path_arg.starts_with('~') {
@@ -180,17 +181,16 @@ async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
 
     eprintln!();
     eprintln!(
-        "  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{}\x1b[0m",
-        name
+        "  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{name}\x1b[0m"
     );
     eprintln!("  \x1b[1;96m[open]\x1b[0m   Path: {}", abs_path.display());
 
     // Generate token
-    let token = nvim_web_host::project::store_token(abs_path.clone(), config);
+    let token = nvim_web_host::project::store_token(abs_path, config);
 
     // Build URL
-    let url = format!("http://localhost:8080/?open={}", token);
-    eprintln!("  \x1b[1;96m[open]\x1b[0m   URL: {}", url);
+    let url = format!("http://localhost:8080/?open={token}");
+    eprintln!("  \x1b[1;96m[open]\x1b[0m   URL: {url}");
     eprintln!();
     eprintln!("  \x1b[1;32m>\x1b[0m Opening in browser...");
     eprintln!();
@@ -219,13 +219,14 @@ async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> anyhow::Result<()> {
     // Handle --version and --help
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         match args[1].as_str() {
             "--version" | "-v" => {
-                println!("nvim-web {}", VERSION);
+                println!("nvim-web {VERSION}");
                 return Ok(());
             }
             "--help" | "-h" => {
@@ -253,16 +254,21 @@ async fn main() -> anyhow::Result<()> {
             }
             "open" => {
                 // Magic link: Open a project in the browser
-                return handle_open_command(&args).await;
+                return handle_open_command(&args);
             }
-            "serve" => {
-                // Explicit serve command - fall through to server start
-            }
+            #[allow(clippy::match_same_arms)]
+            "serve" | "--native" => {}
             _ => {}
         }
     }
 
-    print_banner();
+    let is_native = args.iter().any(|a| a == "--native");
+    if is_native {
+        // In native mode, we don't print banner to stderr to keep logs clean
+        eprintln!("nvim-web starting in native mode...");
+    } else {
+        print_banner();
+    }
 
     // === LOAD CONFIGURATION ===
     Config::create_default_if_missing();
@@ -277,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Check Neovim availability
     if let Err(e) = startup_checks() {
-        eprintln!("  \x1b[1;31m[error]\x1b[0m  {}", e);
+        eprintln!("  \x1b[1;31m[error]\x1b[0m  {e}");
         std::process::exit(1);
     }
 
@@ -289,19 +295,16 @@ async fn main() -> anyhow::Result<()> {
             "  \x1b[1;33m[warn]\x1b[0m   Port {} in use, finding alternative...",
             config.server.http_port
         );
-        match find_available_port(&config.server.bind, config.server.http_port + 1) {
-            Some(p) => {
-                eprintln!("  \x1b[1;32m[check]\x1b[0m  Using HTTP port {}", p);
-                p
-            }
-            None => {
-                eprintln!(
-                    "  \x1b[1;31m[error]\x1b[0m  No available HTTP ports in range {}-{}",
-                    config.server.http_port,
-                    config.server.http_port + 10
-                );
-                std::process::exit(1);
-            }
+        if let Some(p) = find_available_port(&config.server.bind, config.server.http_port + 1) {
+            eprintln!("  \x1b[1;32m[check]\x1b[0m  Using HTTP port {p}");
+            p
+        } else {
+            eprintln!(
+                "  \x1b[1;31m[error]\x1b[0m  No available HTTP ports in range {}-{}",
+                config.server.http_port,
+                config.server.http_port + 10
+            );
+            std::process::exit(1);
         }
     };
 
@@ -313,19 +316,16 @@ async fn main() -> anyhow::Result<()> {
             "  \x1b[1;33m[warn]\x1b[0m   WS Port {} in use, finding alternative...",
             config.server.ws_port
         );
-        match find_available_port(&config.server.bind, config.server.ws_port + 1) {
-            Some(p) => {
-                eprintln!("  \x1b[1;32m[check]\x1b[0m  Using WS port {}", p);
-                p
-            }
-            None => {
-                eprintln!(
-                    "  \x1b[1;31m[error]\x1b[0m  No available WS ports in range {}-{}",
-                    config.server.ws_port,
-                    config.server.ws_port + 10
-                );
-                std::process::exit(1);
-            }
+        if let Some(p) = find_available_port(&config.server.bind, config.server.ws_port + 1) {
+            eprintln!("  \x1b[1;32m[check]\x1b[0m  Using WS port {p}");
+            p
+        } else {
+            eprintln!(
+                "  \x1b[1;31m[error]\x1b[0m  No available WS ports in range {}-{}",
+                config.server.ws_port,
+                config.server.ws_port + 10
+            );
+            std::process::exit(1);
         }
     };
 
@@ -339,8 +339,7 @@ async fn main() -> anyhow::Result<()> {
     vfs.register_backend("local", Box::new(LocalFs::new(&home_dir)));
     let vfs_manager = Arc::new(RwLock::new(vfs));
     eprintln!(
-        "  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {})",
-        home_dir
+        "  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {home_dir})"
     );
 
     print_connection_info(http_port, ws_port, &config.server.bind, true);
@@ -367,6 +366,8 @@ async fn main() -> anyhow::Result<()> {
     let http_server = axum::serve(http_listener, app);
 
     // === GRACEFUL SHUTDOWN HANDLER ===
+    let (native_shutdown_tx, native_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    
     let shutdown_signal = async {
         // Wait for Ctrl+C or SIGTERM
         let ctrl_c = async {
@@ -385,10 +386,21 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(not(unix))]
         let terminate = std::future::pending::<()>();
+        
+        // Wait for Native Messaging channel to close (Browser quit)
+        let native_exit = async {
+            if is_native {
+                let _ = native_shutdown_rx.await;
+                eprintln!("  \x1b[1;33m[native]\x1b[0m Native host disconnected.");
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
 
         tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
+            () = ctrl_c => {},
+            () = terminate => {},
+            () = native_exit => {},
         }
 
         eprintln!();
@@ -398,8 +410,7 @@ async fn main() -> anyhow::Result<()> {
         let mut mgr = session_manager_shutdown.write().await;
         let session_count = mgr.session_count();
         eprintln!(
-            "  \x1b[1;33m[cleanup]\x1b[0m Cleaning up {} sessions...",
-            session_count
+            "  \x1b[1;33m[cleanup]\x1b[0m Cleaning up {session_count} sessions..."
         );
 
         // Clean up all sessions
@@ -407,6 +418,7 @@ async fn main() -> anyhow::Result<()> {
         for id in ids {
             mgr.remove_session(&id);
         }
+        drop(mgr); // Explicit drop to satisfy clippy significant_drop_tightening
 
         eprintln!("  \x1b[1;32m[done]\x1b[0m   Later! Stay chill.");
         eprintln!();
@@ -419,10 +431,19 @@ async fn main() -> anyhow::Result<()> {
         }
         result = http_server => {
             if let Err(e) = result {
-                eprintln!("  \x1b[1;31m[error]\x1b[0m  HTTP server error: {}", e);
+                eprintln!("  \x1b[1;31m[error]\x1b[0m  HTTP server error: {e}");
             }
         }
-        _ = shutdown_signal => {
+        () = async {
+            if is_native {
+                if let Err(e) = native::run(native_shutdown_tx) {
+                     eprintln!("  \x1b[1;31m[error]\x1b[0m  Native loop error: {e}");
+                }
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {}
+        () = shutdown_signal => {
             // Shutdown was triggered
         }
     }

@@ -11,8 +11,8 @@ pub struct FileStat {
 
 /// VFS backend trait - all file operations go through this
 ///
-/// This trait uses async_trait to support asynchronous backends like
-/// BrowserFs which communicates over WebSocket.
+/// This trait uses `async_trait` to support asynchronous backends like
+/// `BrowserFs` which communicates over WebSocket.
 #[async_trait]
 pub trait VfsBackend: Send + Sync {
     /// Read entire file contents

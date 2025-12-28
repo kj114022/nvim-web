@@ -9,7 +9,7 @@ pub struct Cell {
 }
 
 impl Cell {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             ch: ' ',
             hl_id: None,
@@ -172,8 +172,8 @@ impl GridManager {
 
     /// Get or create grid
     pub fn get_or_create(&mut self, grid_id: u32, rows: usize, cols: usize) -> &mut Grid {
-        if !self.grids.contains_key(&grid_id) {
-            self.grids.insert(grid_id, Grid::new(grid_id, rows, cols));
+        if let std::collections::hash_map::Entry::Vacant(e) = self.grids.entry(grid_id) {
+            e.insert(Grid::new(grid_id, rows, cols));
             self.order.push(grid_id);
         }
         self.grids.get_mut(&grid_id).unwrap()
@@ -271,7 +271,7 @@ impl GridManager {
     }
 
     /// Get active grid ID
-    pub fn active_grid_id(&self) -> u32 {
+    pub const fn active_grid_id(&self) -> u32 {
         self.active_grid
     }
 

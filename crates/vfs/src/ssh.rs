@@ -1,3 +1,5 @@
+#![allow(clippy::non_std_lazy_statics)]
+#![allow(unsafe_code)]
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -30,8 +32,8 @@ const POOL_TTL: Duration = Duration::from_secs(300);
 /// Connects to remote servers via SSH and provides file operations over SFTP.
 /// Connections are pooled and reused for performance.
 ///
-/// URI format: vfs://ssh/<user>@<host>:<port>/<absolute-path>
-/// Example: vfs://ssh/alice@server:22/home/alice/main.rs
+/// URI format: `vfs://ssh/<user>@<host>:<port>/<absolute-path>`
+/// Example: `vfs://ssh/alice@server:22/home/alice/main.rs`
 pub struct SshFsBackend {
     inner: Mutex<SshFsInner>,
     pool_key: String,
@@ -42,6 +44,7 @@ struct SshFsInner {
     sftp: Sftp,
 }
 
+// SshFsBackend is Send + Sync because it wraps non-Send types in Mutex
 // SshFsBackend is Send + Sync because it wraps non-Send types in Mutex
 unsafe impl Send for SshFsBackend {}
 unsafe impl Sync for SshFsBackend {}
@@ -70,14 +73,14 @@ impl SshFsBackend {
                 .map_err(|_| anyhow::anyhow!("SSH pool lock poisoned"))?;
             if let Some(entry) = pool.get(&pool_key) {
                 if entry.last_used.elapsed() < POOL_TTL {
-                    eprintln!("  [ssh] Reusing pooled connection to {}", pool_key);
+                    eprintln!("  [ssh] Reusing pooled connection to {pool_key}");
                     return Ok(entry.backend.clone());
                 }
             }
         }
 
         // Create new connection
-        eprintln!("  [ssh] Creating new connection to {}", pool_key);
+        eprintln!("  [ssh] Creating new connection to {pool_key}");
         let backend = Arc::new(Self::connect_new(&parsed)?);
 
         // Store in pool
@@ -90,7 +93,7 @@ impl SshFsBackend {
             pool.retain(|_, entry| entry.last_used.elapsed() < POOL_TTL);
 
             pool.insert(
-                pool_key.clone(),
+                pool_key,
                 PoolEntry {
                     backend: backend.clone(),
                     last_used: Instant::now(),
@@ -116,7 +119,7 @@ impl SshFsBackend {
         let addr = format!("{}:{}", parsed.host, parsed.port);
 
         let tcp =
-            TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {}", addr))?;
+            TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {addr}"))?;
 
         // Set TCP keepalive
         let _ = tcp.set_read_timeout(Some(Duration::from_secs(30)));
@@ -139,7 +142,7 @@ impl SshFsBackend {
     }
 
     /// Legacy connect method (creates unpooled connection)
-    /// Prefer get_or_connect() for pooled connections
+    /// Prefer `get_or_connect()` for pooled connections
     pub fn connect(uri: &str) -> Result<Self> {
         let parsed = Self::parse_ssh_uri(uri)?;
         Self::connect_new(&parsed)
@@ -183,7 +186,7 @@ impl SshFsBackend {
     /// Test SSH connection without storing it
     pub fn test_connection(uri: &str, password: Option<&str>) -> Result<()> {
         let mut parsed = Self::parse_ssh_uri(uri)?;
-        parsed.password = password.map(|s| s.to_string());
+        parsed.password = password.map(ToString::to_string);
         let _backend = Self::connect_new_with_password(&parsed)?;
         Ok(())
     }
@@ -191,7 +194,7 @@ impl SshFsBackend {
     /// Connect with optional password and return pooled backend
     pub fn connect_with_password(uri: &str, password: Option<&str>) -> Result<Arc<Self>> {
         let mut parsed = Self::parse_ssh_uri(uri)?;
-        parsed.password = password.map(|s| s.to_string());
+        parsed.password = password.map(ToString::to_string);
         let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
 
         // Create new connection with password
@@ -221,7 +224,7 @@ impl SshFsBackend {
         let addr = format!("{}:{}", parsed.host, parsed.port);
 
         let tcp =
-            TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {}", addr))?;
+            TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {addr}"))?;
         let _ = tcp.set_read_timeout(Some(Duration::from_secs(30)));
 
         let mut session = Session::new().context("Failed to create SSH session")?;
@@ -271,7 +274,7 @@ impl SshFsBackend {
                     .userauth_pubkey_file(&parsed.user, None, &key_path, None)
                     .is_ok()
             {
-                eprintln!("  [ssh] Authenticated with key: {}", key_name);
+                eprintln!("  [ssh] Authenticated with key: {key_name}");
                 return Ok(());
             }
         }
@@ -281,24 +284,27 @@ impl SshFsBackend {
 }
 
 #[async_trait]
+#[allow(clippy::significant_drop_tightening)]
 impl VfsBackend for SshFsBackend {
     async fn read(&self, path: &str) -> Result<Vec<u8>> {
         let path = path.to_string();
-        // Lock is held only during the blocking operation in spawn_blocking
-        // This is safe because we're not holding it across await points
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
-        let sftp = &inner.sftp;
+        // Use a block to constrain the lock lifetime
+        let buf = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
+            let sftp = &inner.sftp;
 
-        let mut file = sftp
-            .open(Path::new(&path))
-            .with_context(|| format!("Failed to open {}", path))?;
+            let mut file = sftp
+                .open(Path::new(&path))
+                .with_context(|| format!("Failed to open {path}"))?;
 
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)
-            .with_context(|| format!("Failed to read {}", path))?;
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)
+                .with_context(|| format!("Failed to read {path}"))?;
+            buf
+        };
 
         Ok(buf)
     }
@@ -307,37 +313,41 @@ impl VfsBackend for SshFsBackend {
         use ssh2::OpenFlags;
         use ssh2::OpenType;
 
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
+        {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
 
-        let mut file = inner
-            .sftp
-            .open_mode(
-                Path::new(path),
-                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
-                0o644,
-                OpenType::File,
-            )
-            .with_context(|| format!("Failed to open {} for writing", path))?;
+            let mut file = inner
+                .sftp
+                .open_mode(
+                    Path::new(path),
+                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+                    0o644,
+                    OpenType::File,
+                )
+                .with_context(|| format!("Failed to open {path} for writing"))?;
 
-        file.write_all(data)
-            .with_context(|| format!("Failed to write to {}", path))?;
+            file.write_all(data)
+                .with_context(|| format!("Failed to write to {path}"))?;
+        }
 
         Ok(())
     }
 
     async fn stat(&self, path: &str) -> Result<FileStat> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
+        let stat = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
 
-        let stat = inner
-            .sftp
-            .stat(Path::new(path))
-            .with_context(|| format!("Failed to stat {}", path))?;
+            inner
+                .sftp
+                .stat(Path::new(path))
+                .with_context(|| format!("Failed to stat {path}"))?
+        };
 
         Ok(FileStat {
             is_file: stat.is_file(),
@@ -347,24 +357,26 @@ impl VfsBackend for SshFsBackend {
     }
 
     async fn list(&self, path: &str) -> Result<Vec<String>> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
+        let names = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SSH mutex poisoned"))?;
 
-        let entries = inner
-            .sftp
-            .readdir(Path::new(path))
-            .with_context(|| format!("Failed to list directory {}", path))?;
+            let entries = inner
+                .sftp
+                .readdir(Path::new(path))
+                .with_context(|| format!("Failed to list directory {path}"))?;
 
-        let names = entries
-            .into_iter()
-            .filter_map(|(p, _)| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
-            .collect();
+            entries
+                .into_iter()
+                .filter_map(|(p, _)| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(ToString::to_string)
+                })
+                .collect()
+        };
 
         Ok(names)
     }

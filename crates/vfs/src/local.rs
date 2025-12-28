@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::backend::{FileStat, VfsBackend};
 
-/// Local filesystem backend - maps vfs://local/... to real filesystem
+/// Local filesystem backend - maps `<vfs://local/...>` to real filesystem
 pub struct LocalFs {
     root: PathBuf,
 }

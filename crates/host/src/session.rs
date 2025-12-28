@@ -24,7 +24,7 @@ pub fn generate_session_id() -> SessionId {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("{:x}", now)
+    format!("{now:x}")
 }
 
 /// The writer type used by nvim-rs with tokio
@@ -47,7 +47,7 @@ pub struct RedrawHandler {
 }
 
 impl RedrawHandler {
-    pub fn new(
+    pub const fn new(
         session_id: String,
         redraw_tx: broadcast::Sender<Vec<u8>>,
         requests: RequestMap,
@@ -106,14 +106,13 @@ impl Handler for RedrawHandler {
                 Ok(Err(_)) => return Err(Value::String("Clipboard request channel closed".into())),
                 Err(_) => {
                     // Timeout - ensure we remove the sender
-                    let mut map = self.requests.lock().unwrap();
-                    map.remove(&req_id);
+                    self.requests.lock().unwrap().remove(&req_id);
                     return Err(Value::String("Clipboard request timed out".into()));
                 }
             }
         }
 
-        Err(Value::String(format!("Unknown request: {}", name).into()))
+        Err(Value::String(format!("Unknown request: {name}").into()))
     }
 
     async fn handle_notify(&self, name: String, args: Vec<Value>, _neovim: Neovim<Self::Writer>) {
@@ -166,8 +165,7 @@ impl Handler for RedrawHandler {
                 (
                     Value::String("git_branch".into()),
                     git_branch
-                        .map(|b| Value::String(b.into()))
-                        .unwrap_or(Value::Nil),
+                        .map_or(Value::Nil, |b| Value::String(b.into())),
                 ),
             ];
 
@@ -176,7 +174,7 @@ impl Handler for RedrawHandler {
             let mut bytes = Vec::new();
             if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
                 let _ = self.redraw_tx.send(bytes);
-                eprintln!("SESSION: CWD changed -> {} (git: {:?})", cwd, git_branch);
+                eprintln!("SESSION: CWD changed -> {cwd} (git: {git_branch:?})");
             }
         }
     }
@@ -194,8 +192,22 @@ pub struct AsyncSession {
     pub requests: RequestMap,
 }
 
+// Helper: Execute multi-line VimL via nvim_exec2
+async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
+    // nvim_exec2(src, opts) - opts is a map with "output" key
+    let opts = vec![(Value::String("output".into()), Value::Boolean(false))];
+    let _ = nvim
+        .call(
+            "nvim_exec2",
+            vec![Value::String(script.into()), Value::Map(opts)],
+        )
+        .await?;
+    Ok(())
+}
+
 impl AsyncSession {
     /// Create a new session with a freshly spawned Neovim instance
+    #[allow(clippy::too_many_lines)]
     pub async fn new() -> Result<Self> {
         let id = generate_session_id();
         let id_for_log = id.clone();
@@ -238,7 +250,7 @@ impl AsyncSession {
         // Spawn the IO handler task
         tokio::spawn(async move {
             if let Err(e) = io_handler.await {
-                eprintln!("SESSION {}: IO handler error: {:?}", id_for_log, e);
+                eprintln!("SESSION {id_for_log}: IO handler error: {e:?}");
             }
         });
 
@@ -253,7 +265,7 @@ impl AsyncSession {
         if check_git.is_err() || check_git.unwrap_or_default().is_empty() {
             let git_cmd = "command! -nargs=* Git execute '!' . 'git ' . <q-args>";
             if let Err(e) = nvim.command(git_cmd).await {
-                eprintln!("SESSION: Git command setup failed: {:?}", e);
+                eprintln!("SESSION: Git command setup failed: {e:?}");
             } else {
                 eprintln!("SESSION: Git command wrapper registered");
             }
@@ -261,21 +273,8 @@ impl AsyncSession {
             eprintln!("SESSION: Git command already exists (likely fugitive)");
         }
 
-        // Helper: Execute multi-line VimL via nvim_exec2
-        async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
-            // nvim_exec2(src, opts) - opts is a map with "output" key
-            let opts = vec![(Value::String("output".into()), Value::Boolean(false))];
-            let _ = nvim
-                .call(
-                    "nvim_exec2",
-                    vec![Value::String(script.into()), Value::Map(opts)],
-                )
-                .await?;
-            Ok(())
-        }
-
         // Set up VfsStatus command to show current backend/path info
-        let vfs_status_cmd = r#"
+        let vfs_status_cmd = r"
 command! VfsStatus call NvimWeb_ShowVfsStatus()
 
 function! NvimWeb_ShowVfsStatus()
@@ -290,15 +289,15 @@ function! NvimWeb_ShowVfsStatus()
   echo 'Path: ' . (l:buf != '' ? l:buf : '[No Name]')
   echo 'CWD: ' . getcwd()
 endfunction
-"#;
+";
         if let Err(e) = exec_viml(&nvim, vfs_status_cmd).await {
-            eprintln!("SESSION: VfsStatus command setup failed: {:?}", e);
+            eprintln!("SESSION: VfsStatus command setup failed: {e:?}");
         } else {
             eprintln!("SESSION: VfsStatus command registered");
         }
 
         // Set up auto-CD to git root when opening files
-        let auto_cd_git = r#"
+        let auto_cd_git = r"
 augroup NvimWebGitCD
   autocmd!
   autocmd BufEnter * call NvimWeb_AutoCdToGitRoot()
@@ -314,9 +313,9 @@ function! NvimWeb_AutoCdToGitRoot()
     execute 'lcd ' . fnameescape(trim(l:git_root))
   endif
 endfunction
-"#;
+";
         if let Err(e) = exec_viml(&nvim, auto_cd_git).await {
-            eprintln!("SESSION: Auto-CD setup failed: {:?}", e);
+            eprintln!("SESSION: Auto-CD setup failed: {e:?}");
         } else {
             eprintln!("SESSION: Auto-CD to git root enabled");
         }
@@ -353,16 +352,16 @@ function! NvimWeb_NotifyCwdChanged()
 endfunction
 "#;
         if let Err(e) = exec_viml(&nvim, cwd_sync).await {
-            eprintln!("SESSION: CWD sync setup failed: {:?}", e);
+            eprintln!("SESSION: CWD sync setup failed: {e:?}");
         } else {
             eprintln!("SESSION: Real-time CWD sync enabled");
             // Trigger initial sync
             if let Err(e) = nvim.command("call NvimWeb_NotifyCwdChanged()").await {
-                eprintln!("SESSION: Initial CWD sync failed: {:?}", e);
+                eprintln!("SESSION: Initial CWD sync failed: {e:?}");
             }
         }
 
-        eprintln!("SESSION: Created new async session {}", id);
+        eprintln!("SESSION: Created new async session {id}");
 
         let now = Instant::now();
         Ok(Self {
@@ -421,9 +420,9 @@ endfunction
         match outer_result {
             Ok(inner_result) => {
                 inner_result
-                    .map_err(|err_value| anyhow::anyhow!("Neovim RPC error: {:?}", err_value))
+                    .map_err(|err_value| anyhow::anyhow!("Neovim RPC error: {err_value:?}"))
             }
-            Err(call_error) => Err(anyhow::anyhow!("RPC call failed: {:?}", call_error)),
+            Err(call_error) => Err(anyhow::anyhow!("RPC call failed: {call_error:?}")),
         }
     }
 }
@@ -475,7 +474,7 @@ impl AsyncSessionManager {
 
     /// Remove a session
     pub fn remove_session(&mut self, id: &str) -> Option<AsyncSession> {
-        eprintln!("SESSION: Removing session {}", id);
+        eprintln!("SESSION: Removing session {id}");
         self.sessions.remove(id)
     }
 
@@ -494,7 +493,7 @@ impl AsyncSessionManager {
             .collect();
 
         for id in &stale_ids {
-            eprintln!("SESSION: Cleaning up stale session {}", id);
+            eprintln!("SESSION: Cleaning up stale session {id}");
             self.sessions.remove(id);
         }
 
@@ -525,7 +524,7 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
-    /// Convert to MessagePack Value for RPC
+    /// Convert to `MessagePack` Value for RPC
     pub fn to_value(&self) -> rmpv::Value {
         rmpv::Value::Map(vec![
             (
@@ -534,10 +533,7 @@ impl SessionInfo {
             ),
             (
                 rmpv::Value::String("name".into()),
-                match &self.name {
-                    Some(n) => rmpv::Value::String(n.clone().into()),
-                    None => rmpv::Value::Nil,
-                },
+                self.name.as_ref().map_or(rmpv::Value::Nil, |n| rmpv::Value::String(n.clone().into()))
             ),
             (
                 rmpv::Value::String("created_at_secs".into()),
@@ -579,7 +575,7 @@ impl AsyncSessionManager {
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
         self.sessions
             .values()
-            .map(|s| s.to_session_info())
+            .map(AsyncSession::to_session_info)
             .collect()
     }
 
@@ -591,7 +587,7 @@ impl AsyncSessionManager {
     /// Generate a shareable link for a session
     pub fn get_share_link(&self, session_id: &str, host: &str) -> Option<String> {
         if self.has_session(session_id) {
-            Some(format!("{}?session={}", host, session_id))
+            Some(format!("{host}?session={session_id}"))
         } else {
             None
         }

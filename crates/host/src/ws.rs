@@ -19,6 +19,8 @@ use crate::session::AsyncSessionManager;
 use crate::settings::SettingsStore;
 use crate::vfs::{FsRequestRegistry, VfsManager};
 use crate::vfs_handlers;
+use crate::git;
+use std::path::Path;
 
 /// Allowed origins for WebSocket connections
 /// Only localhost is allowed by default for security
@@ -70,17 +72,17 @@ fn validate_origin(origin: &str) -> bool {
 /// # Arguments
 /// * `session_manager` - Session manager for Neovim sessions
 /// * `port` - Port to listen on
-/// * `fs_registry` - Optional FsRequestRegistry for BrowserFs support
-/// * `vfs_manager` - Optional VfsManager for VFS operations
+/// * `fs_registry` - Optional `FsRequestRegistry` for `BrowserFs` support
+/// * `vfs_manager` - Optional `VfsManager` for VFS operations
 pub async fn serve_multi_async(
     session_manager: Arc<RwLock<AsyncSessionManager>>,
     port: u16,
     fs_registry: Option<Arc<FsRequestRegistry>>,
     vfs_manager: Option<Arc<RwLock<VfsManager>>>,
 ) -> Result<()> {
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(&addr).await?;
-    println!("WebSocket server listening on ws://{} (async mode)", addr);
+    println!("WebSocket server listening on ws://{addr} (async mode)");
 
     // Spawn cleanup task
     let cleanup_manager = session_manager.clone();
@@ -97,24 +99,26 @@ pub async fn serve_multi_async(
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
-                eprintln!("WS: Connection from {:?}", addr);
+                eprintln!("WS: Connection from {addr:?}");
                 let manager = session_manager.clone();
                 let registry = fs_registry.clone();
                 let vfs = vfs_manager.clone();
 
                 tokio::spawn(async move {
                     if let Err(e) = handle_connection(stream, manager, registry, vfs).await {
-                        eprintln!("WS: Connection error: {}", e);
+                        eprintln!("WS: Connection error: {e}");
                     }
                 });
             }
             Err(e) => {
-                eprintln!("WS: Accept failed: {}", e);
+                eprintln!("WS: Accept failed: {e}");
             }
         }
     }
 }
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::significant_drop_tightening)]
 async fn handle_connection(
     stream: TcpStream,
     manager: Arc<RwLock<AsyncSessionManager>>,
@@ -134,14 +138,14 @@ async fn handle_connection(
         // Extract session ID from URI
         let uri = req.uri().to_string();
         info.session_id = parse_session_id_from_uri(&uri);
-        eprintln!("WS: URI={}, parsed session_id={:?}", uri, info.session_id);
+        eprintln!("WS: URI={uri}, parsed session_id={:?}", info.session_id);
 
         // Extract and validate origin
         if let Some(origin) = req.headers().get("origin") {
             if let Ok(origin_str) = origin.to_str() {
                 info.origin = Some(origin_str.to_string());
                 info.origin_valid = validate_origin(origin_str);
-                eprintln!("WS: Origin={}, valid={}", origin_str, info.origin_valid);
+                eprintln!("WS: Origin={origin_str}, valid={}", info.origin_valid);
             }
         } else {
             // No origin header = same-origin request (OK)
@@ -174,7 +178,7 @@ async fn handle_connection(
         // Try to reconnect to existing session
         if let Some(ref existing_id) = info.session_id {
             if mgr.has_session(existing_id) {
-                eprintln!("WS: Reconnecting to existing session {}", existing_id);
+                eprintln!("WS: Reconnecting to existing session {existing_id}");
                 if let Some(session) = mgr.get_session_mut(existing_id) {
                     session.connected = true;
                     session.touch();
@@ -183,7 +187,7 @@ async fn handle_connection(
                 }
                 existing_id.clone()
             } else {
-                eprintln!("WS: Session {} not found, creating new", existing_id);
+                eprintln!("WS: Session {existing_id} not found, creating new");
                 create_new_session(&mut mgr).await?
             }
         } else {
@@ -192,7 +196,7 @@ async fn handle_connection(
         }
     };
 
-    eprintln!("WS: Active session {}", session_id);
+    eprintln!("WS: Active session {session_id}");
 
     // Send session ID to client
     let session_msg = Value::Array(vec![
@@ -207,7 +211,7 @@ async fn handle_connection(
     let mut redraw_rx = {
         let mgr = manager.read().await;
         mgr.get_session(&session_id)
-            .map(|s| s.subscribe())
+            .map(crate::session::AsyncSession::subscribe)
             .ok_or_else(|| anyhow::anyhow!("Session not found"))?
     };
 
@@ -227,7 +231,7 @@ async fn handle_connection(
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        eprintln!("WS: Lagged {} messages", n);
+                        eprintln!("WS: Lagged {n} messages");
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         eprintln!("WS: Redraw channel closed");
@@ -258,7 +262,7 @@ async fn handle_connection(
                                 // Fire-and-forget message, no response needed
                             }
                             Err(e) => {
-                                eprintln!("WS: Error handling message: {}", e);
+                                eprintln!("WS: Error handling message: {e}");
                             }
                         }
 
@@ -273,7 +277,7 @@ async fn handle_connection(
                         break;
                     }
                     Some(Err(e)) => {
-                        eprintln!("WS: Error reading: {}", e);
+                        eprintln!("WS: Error reading: {e}");
                         break;
                     }
                     None => {
@@ -295,7 +299,7 @@ async fn handle_connection(
         }
     }
 
-    eprintln!("WS: Client disconnected from session {}", session_id);
+    eprintln!("WS: Client disconnected from session {session_id}");
     Ok(())
 }
 
@@ -309,7 +313,7 @@ async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
             Ok(id)
         }
         Err(e) => {
-            eprintln!("WS: Failed to create session: {}", e);
+            eprintln!("WS: Failed to create session: {e}");
             Err(e)
         }
     }
@@ -323,6 +327,8 @@ async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
 /// - Type "resize": fire-and-forget resize ["resize", cols, rows]
 ///
 /// Returns optional response bytes to send back to browser
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::significant_drop_tightening)]
 async fn handle_browser_message(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
@@ -351,8 +357,7 @@ async fn handle_browser_message(
                 };
 
                 eprintln!(
-                    "WS: RPC call id={:?} method={} params={:?}",
-                    id, method, params
+                    "WS: RPC call id={id:?} method={method} params={params:?}"
                 );
 
                 // Check for VFS methods first (handle locally, not forwarded to Neovim)
@@ -360,44 +365,38 @@ async fn handle_browser_message(
                     "vfs_open" if vfs_manager.is_some() => {
                         // vfs_open(vfs_path) -> bufnr
                         let vfs_path = params.first().and_then(|v| v.as_str()).unwrap_or("");
+                        let bufnr = {
+                            let mgr = manager.read().await;
+                            let session = mgr
+                                .get_session(session_id)
+                                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                            let vfs = vfs_manager.as_ref().unwrap().read().await;
+                            vfs_handlers::handle_open_vfs(vfs_path, session, &vfs).await?
+                        };
 
-                        let mgr = manager.read().await;
-                        let session = mgr
-                            .get_session(session_id)
-                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
-                        let vfs = vfs_manager.as_ref().unwrap().read().await;
-
-                        Some(
-                            match vfs_handlers::handle_open_vfs(vfs_path, session, &vfs).await {
-                                Ok(bufnr) => (Value::Nil, Value::Integer(bufnr.into())),
-                                Err(e) => (Value::String(e.to_string().into()), Value::Nil),
-                            },
-                        )
+                        Some((Value::Nil, Value::Integer(bufnr.into())))
                     }
                     "vfs_write" if vfs_manager.is_some() => {
                         // vfs_write(vfs_path, bufnr) -> nil
                         let vfs_path = params.first().and_then(|v| v.as_str()).unwrap_or("");
-                        let bufnr = params.get(1).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        let bufnr = u32::try_from(params.get(1).and_then(Value::as_u64).unwrap_or(0)).unwrap_or(0);
 
-                        let mgr = manager.read().await;
-                        let session = mgr
-                            .get_session(session_id)
-                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
-                        let vfs = vfs_manager.as_ref().unwrap().read().await;
+                        {
+                            let mgr = manager.read().await;
+                            let session = mgr
+                                .get_session(session_id)
+                                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                            let vfs = vfs_manager.as_ref().unwrap().read().await;
+                            vfs_handlers::handle_write_vfs(vfs_path, bufnr, session, &vfs)
+                                .await?;
+                        }
 
-                        Some(
-                            match vfs_handlers::handle_write_vfs(vfs_path, bufnr, session, &vfs)
-                                .await
-                            {
-                                Ok(()) => (Value::Nil, Value::Nil),
-                                Err(e) => (Value::String(e.to_string().into()), Value::Nil),
-                            },
-                        )
+                        Some((Value::Nil, Value::Nil))
                     }
                     "vfs_list" if vfs_manager.is_some() => {
                         // vfs_list(path, depth) -> tree entries
                         let path = params.first().and_then(|v| v.as_str()).unwrap_or("/");
-                        let depth = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                        let depth = usize::try_from(params.get(1).and_then(Value::as_u64).unwrap_or(1)).unwrap_or(1);
 
                         let vfs = vfs_manager.as_ref().unwrap().read().await;
                         // Use the "local" backend for now
@@ -420,8 +419,7 @@ async fn handle_browser_message(
                             Ok(store) => {
                                 let value = store
                                     .get(key)
-                                    .map(|v| Value::String(v.into()))
-                                    .unwrap_or(Value::Nil);
+                                    .map_or(Value::Nil, |v| Value::String(v.into()));
                                 (Value::Nil, value)
                             }
                             Err(e) => (Value::String(e.to_string().into()), Value::Nil),
@@ -452,39 +450,40 @@ async fn handle_browser_message(
                     }),
                     // CWD and Git info for status drawer
                     "get_cwd_info" => {
-                        let mgr = manager.read().await;
-                        let session = mgr
-                            .get_session(session_id)
-                            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+                        let cwd_data = {
+                            let mgr = manager.read().await;
+                            let session = mgr
+                                .get_session(session_id)
+                                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
-                        // Get CWD from Neovim
-                        let cwd_result = session
-                            .rpc_call(
-                                "nvim_call_function",
-                                vec![Value::String("getcwd".into()), Value::Array(vec![])],
-                            )
-                            .await;
+                            // Get CWD from Neovim
+                            let cwd_result = session
+                                .rpc_call(
+                                    "nvim_call_function",
+                                    vec![Value::String("getcwd".into()), Value::Array(vec![])],
+                                )
+                                .await;
+                            
+                            let buf_result = session
+                                .rpc_call("nvim_buf_get_name", vec![Value::Integer(0.into())])
+                                .await;
+
+                            (cwd_result, buf_result)
+                        };
+
+                        let (cwd_result, buf_result) = cwd_data;
 
                         let cwd = cwd_result
                             .ok()
-                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .and_then(|v| v.as_str().map(ToString::to_string))
                             .unwrap_or_else(|| "~".to_string());
-
-                        // Get current buffer name
-                        let buf_result = session
-                            .rpc_call("nvim_buf_get_name", vec![Value::Integer(0.into())])
-                            .await;
 
                         let current_file = buf_result
                             .ok()
-                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .and_then(|v| v.as_str().map(ToString::to_string))
                             .unwrap_or_default();
 
                         // Detect git root and branch
-                        use std::path::Path;
-
-                        use crate::git;
-
                         let git_root = git::find_git_root(Path::new(&cwd));
                         let git_branch = git_root
                             .as_ref()
@@ -513,8 +512,7 @@ async fn handle_browser_message(
                             (
                                 Value::String("git_branch".into()),
                                 git_branch
-                                    .map(|b| Value::String(b.into()))
-                                    .unwrap_or(Value::Nil),
+                                    .map_or(Value::Nil, |b| Value::String(b.into())),
                             ),
                         ];
 
@@ -554,14 +552,14 @@ async fn handle_browser_message(
                     let ok = arr[2].as_bool().unwrap_or(false);
                     let result = &arr[3];
 
-                    eprintln!("WS: FS response id={} ok={}", id, ok);
+                    eprintln!("WS: FS response id={id} ok={ok}");
 
                     if ok {
                         registry.resolve(id, Ok(result.clone())).await;
                     } else {
                         let err_msg = result.as_str().unwrap_or("Unknown FS error");
                         registry
-                            .resolve(id, Err(anyhow::anyhow!("{}", err_msg)))
+                            .resolve(id, Err(anyhow::anyhow!("{err_msg}")))
                             .await;
                     }
                 }
@@ -575,10 +573,10 @@ async fn handle_browser_message(
                     if method.as_str() == Some("clipboard_read_response") {
                         if let Value::Array(params) = &arr[2] {
                             if params.len() >= 2 {
-                                let req_id = params[0].as_u64().unwrap_or(0) as u32;
+                                let req_id = u32::try_from(params[0].as_u64().unwrap_or(0)).unwrap_or(0);
                                 let content = &params[1];
 
-                                eprintln!("WS: Clipboard response id={}", req_id);
+                                eprintln!("WS: Clipboard response id={req_id}");
                                 let mgr = manager.read().await;
                                 if let Some(session) = mgr.get_session(session_id) {
                                     session.complete_request(req_id, content.clone());
@@ -613,7 +611,7 @@ async fn handle_browser_message(
                             {
                                 let cols = cols.as_i64().unwrap_or(80);
                                 let rows = rows.as_i64().unwrap_or(24);
-                                eprintln!("WS: Resize request: cols={}, rows={}", cols, rows);
+                                eprintln!("WS: Resize request: cols={cols}, rows={rows}");
                                 session.resize(cols, rows).await?;
                                 eprintln!("WS: Resize complete");
                             }

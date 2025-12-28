@@ -39,10 +39,10 @@ impl VfsManager {
 
     /// Get a reference to a registered backend
     pub fn get_backend(&self, name: &str) -> Option<&dyn VfsBackend> {
-        self.backends.get(name).map(|b| b.as_ref())
+        self.backends.get(name).map(AsRef::as_ref)
     }
 
-    /// Parse VFS path: vfs://backend/path -> (backend, path)
+    /// Parse VFS path: `<vfs://backend/path>` -> (backend, path)
     pub fn parse_vfs_path(&self, vfs_path: &str) -> Result<(String, String)> {
         if !vfs_path.starts_with("vfs://") {
             anyhow::bail!("Invalid VFS path: must start with vfs://");
@@ -74,7 +74,7 @@ impl VfsManager {
         let backend = self
             .backends
             .get(&backend_name)
-            .with_context(|| format!("Unknown VFS backend: {}", backend_name))?;
+            .with_context(|| format!("Unknown VFS backend: {backend_name}"))?;
 
         backend.read(&path).await
     }
@@ -95,7 +95,7 @@ impl VfsManager {
         let backend = self
             .backends
             .get(&backend_name)
-            .with_context(|| format!("Unknown VFS backend: {}", backend_name))?;
+            .with_context(|| format!("Unknown VFS backend: {backend_name}"))?;
 
         backend.write(&path, data).await
     }
@@ -107,7 +107,7 @@ impl VfsManager {
         let managed = ManagedBuffer {
             bufnr,
             vfs_path,
-            backend: backend_name.to_string(),
+            backend: backend_name,
         };
 
         self.managed_buffers.insert(bufnr, managed);

@@ -1,6 +1,7 @@
+#![allow(clippy::too_many_lines)]
 //! Neovim redraw event handling for multigrid support
-//! Processes grid_line, grid_cursor_goto, grid_clear, grid_resize,
-//! win_pos, win_float_pos, win_hide, win_close events
+//! Processes `grid_line`, `grid_cursor_goto`, `grid_clear`, `grid_resize`,
+//! `win_pos`, `win_float_pos`, `win_hide`, `win_close` events
 
 use crate::grid::GridManager;
 use crate::highlight::{HighlightMap, HighlightAttr};

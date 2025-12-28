@@ -15,6 +15,7 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::session::{AsyncSessionManager, SessionInfo};
+use crate::vfs::SshFsBackend;
 
 // Shared state
 #[derive(Clone)]
@@ -54,8 +55,7 @@ async fn health_check() -> Json<serde_json::Value> {
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mgr = state.session_manager.read().await;
-    let sessions: Vec<SessionInfo> = mgr.list_sessions();
+    let sessions: Vec<SessionInfo> = state.session_manager.read().await.list_sessions();
     // Use serde_json::to_value to serialize the list
     Json(serde_json::json!({ "sessions": sessions }))
 }
@@ -148,7 +148,7 @@ async fn claim_token(Path(token): Path<String>) -> impl IntoResponse {
         Some((path, config)) => {
             let name = config.display_name(&path);
             let cwd = config.resolved_cwd(&path);
-            let init_file = config.editor.init_file.clone().unwrap_or_default();
+            let init_file = config.editor.init_file.unwrap_or_default();
 
             (
                 StatusCode::OK,
@@ -195,8 +195,6 @@ async fn test_ssh_connection(Json(payload): Json<SshConnectRequest>) -> impl Int
         payload.port.unwrap_or(22)
     );
 
-    use crate::vfs::SshFsBackend;
-
     match SshFsBackend::test_connection(&uri, payload.password.as_deref()) {
         Ok(()) => (
             StatusCode::OK,
@@ -220,13 +218,10 @@ async fn connect_ssh(
         payload.port.unwrap_or(22)
     );
 
-    use crate::vfs::SshFsBackend;
-
     match SshFsBackend::connect_with_password(&uri, payload.password.as_deref()) {
         Ok(_backend) => {
             // Store the active SSH connection in session manager
-            let mut mgr = state.session_manager.write().await;
-            mgr.set_active_ssh(Some(uri.clone()));
+            state.session_manager.write().await.set_active_ssh(Some(uri.clone()));
 
             (
                 StatusCode::OK,
@@ -244,8 +239,7 @@ async fn connect_ssh(
 }
 
 async fn disconnect_ssh(State(state): State<AppState>) -> impl IntoResponse {
-    let mut mgr = state.session_manager.write().await;
-    mgr.set_active_ssh(None);
+    state.session_manager.write().await.set_active_ssh(None);
 
     (
         StatusCode::OK,
@@ -254,7 +248,7 @@ async fn disconnect_ssh(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 // Deprecated entry point kept for signature compatibility if needed, but unused
-pub async fn serve_api(
+pub fn serve_api(
     _addr: &str,
     _session_manager: Arc<RwLock<AsyncSessionManager>>,
 ) -> anyhow::Result<()> {

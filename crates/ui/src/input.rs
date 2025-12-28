@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{window, WebSocket, HtmlCanvasElement, HtmlElement, KeyboardEvent, MouseEvent, TouchEvent, WheelEvent, FocusEvent, ClipboardEvent};
+use web_sys::{window, WebSocket, HtmlCanvasElement, HtmlElement, KeyboardEvent};
 
 use crate::grid::GridManager;
 use crate::renderer::Renderer;
@@ -16,7 +16,7 @@ use crate::dom::{set_dirty, focus_input};
 const MAX_RETRIES: u8 = 5;
 
 /// Connection state for resilience tracking
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[allow(dead_code)]
 pub enum ConnectionState {
     Connected,
@@ -44,7 +44,7 @@ impl InputQueue {
 
     /// Get current connection state
     #[allow(dead_code)]
-    pub fn connection_state(&self) -> ConnectionState {
+    pub const fn connection_state(&self) -> ConnectionState {
         self.state.get()
     }
 
@@ -72,8 +72,8 @@ impl InputQueue {
     }
 
     /// Calculate backoff delay for logging
-    fn backoff_delay_ms(retry_count: u8) -> u32 {
-        100 * (1 << retry_count.min(4))
+    const fn backoff_delay_ms(retry_count: u8) -> u32 {
+        100 * (1 << (if retry_count < 4 { retry_count } else { 4 }))
     }
 
     /// Flush all queued input to WebSocket
@@ -89,7 +89,7 @@ impl InputQueue {
         
         while let Some((bytes, retry_count)) = queue.pop_front() {
             match ws.send_with_u8_array(&bytes) {
-                Ok(_) => {
+                Ok(()) => {
                     if self.send_failures.get() > 0 {
                         self.send_failures.set(0);
                         self.state.set(ConnectionState::Connected);
@@ -110,8 +110,7 @@ impl InputQueue {
                         ).into());
                     } else {
                         web_sys::console::error_1(&format!(
-                            "InputQueue: Dropping after {} retries: {:?}", 
-                            MAX_RETRIES, e
+                            "InputQueue: Dropping after {MAX_RETRIES} retries: {e:?}", 
                         ).into());
                     }
                 }
@@ -148,9 +147,9 @@ pub fn setup_input_listeners(
     ws: &WebSocket,
     canvas: &HtmlCanvasElement,
     editor_root: &HtmlElement,
-    grids: Rc<RefCell<GridManager>>,
-    renderer: Rc<Renderer>,
-    render_state: Rc<RenderState>,
+    grids: &Rc<RefCell<GridManager>>,
+    renderer: &Rc<Renderer>,
+    render_state: &Rc<RenderState>,
 ) -> Result<Rc<InputQueue>, JsValue> {
     // Create InputQueue
     let input_queue = InputQueue::new(ws.clone());
@@ -171,7 +170,7 @@ pub fn setup_input_listeners(
     setup_keyboard_listener(&input_queue, editor_root)?;
     
     // 3. IME / Input (on hidden textarea)
-    setup_ime_listener(&input_queue)?;
+    setup_ime_listener(&input_queue);
 
     // 4. Mouse (mousedown on wrapper)
     setup_mouse_listener(&input_queue, editor_root, canvas, renderer.clone())?;
@@ -180,13 +179,13 @@ pub fn setup_input_listeners(
     setup_scroll_listener(&input_queue, editor_root)?;
 
     // 6. Focus/Blur
-    setup_focus_blur(editor_root, grids.clone(), render_state.clone())?;
+    setup_focus_blur(editor_root, grids, render_state)?;
     
     // 7. Paste
     setup_paste_listener(&input_queue, editor_root)?;
     
     // 8. Touch
-    setup_touch_listener(&input_queue, editor_root, canvas, renderer)?;
+    setup_touch_listener(&input_queue, editor_root, canvas, renderer.clone())?;
 
     Ok(input_queue)
 }
@@ -222,7 +221,7 @@ fn setup_keyboard_listener(input_queue: &Rc<InputQueue>, editor_root: &HtmlEleme
                 k if k.len() == 1 => k,
                 _ => return,
             };
-            format!("<{}{}>", mods, base)
+            format!("<{mods}{base}>")
         } else {
             match key.as_str() {
                 "Enter" => "<CR>".to_string(),
@@ -252,7 +251,7 @@ fn setup_keyboard_listener(input_queue: &Rc<InputQueue>, editor_root: &HtmlEleme
     Ok(())
 }
 
-fn setup_ime_listener(input_queue: &Rc<InputQueue>) -> Result<(), JsValue> {
+fn setup_ime_listener(input_queue: &Rc<InputQueue>) {
     if let Some(document) = window().and_then(|w| w.document()) {
         if let Some(input_el) = document.get_element_by_id("nvim-input") {
              // Composition End
@@ -295,7 +294,6 @@ fn setup_ime_listener(input_queue: &Rc<InputQueue>) -> Result<(), JsValue> {
              oninput.forget();
         }
     }
-    Ok(())
 }
 
 fn setup_mouse_listener(
@@ -321,7 +319,7 @@ fn setup_mouse_listener(
         let col = (x / cell_w).floor() as i32;
         let row = (y / cell_h).floor() as i32;
         
-        let mouse_input = format!("<LeftMouse><{},{}>", col, row);
+        let mouse_input = format!("<LeftMouse><{col},{row}>");
         input_queue_mouse.send_key(&mouse_input);
     }) as Box<dyn FnMut(_)>);
     
@@ -345,8 +343,8 @@ fn setup_scroll_listener(input_queue: &Rc<InputQueue>, editor_root: &HtmlElement
 
 fn setup_focus_blur(
     editor_root: &HtmlElement,
-    grids: Rc<RefCell<GridManager>>,
-    render_state: Rc<RenderState>
+    grids: &Rc<RefCell<GridManager>>,
+    render_state: &Rc<RenderState>
 ) -> Result<(), JsValue> {
     let grids_focus = grids.clone();
     let render_state_focus = render_state.clone();
@@ -424,7 +422,7 @@ fn setup_touch_listener(
             let col = (x / cell_w).floor() as i32;
             let row = (y / cell_h).floor() as i32;
             
-            let mouse_input = format!("<LeftMouse><{},{}>", col, row);
+            let mouse_input = format!("<LeftMouse><{col},{row}>");
             input_queue_touch.send_key(&mouse_input);
         }
     }) as Box<dyn FnMut(_)>);

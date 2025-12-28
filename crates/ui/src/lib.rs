@@ -1,3 +1,10 @@
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::future_not_send)]
+#![allow(clippy::or_fun_call)]
+#![allow(clippy::option_if_let_else)]
+#![allow(clippy::ptr_arg)]
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{window, HtmlCanvasElement};
@@ -47,7 +54,7 @@ pub fn start() -> Result<(), JsValue> {
     let grids = Rc::new(RefCell::new(GridManager::new()));
     let renderer = Rc::new(renderer);
     
-    // Phase 9.2.1: Highlight storage (needed for RenderState)
+    // Highlight storage (needed for RenderState)
     let highlights = Rc::new(RefCell::new(HighlightMap::new()));
 
     // Apply initial HiDPI scaling
@@ -68,11 +75,12 @@ pub fn start() -> Result<(), JsValue> {
     let open_token = session_config.open_token;
     
     // Store project path if we have an open token
-    let _project_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    // Store project path if we have an open token
+    let project_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let _project_name: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
     if let Some(ref token) = open_token {
-        _project_path.borrow_mut().replace(token.clone());
+        project_path.borrow_mut().replace(token.clone());
     }
 
     // Connect to WebSocket with session support
@@ -83,7 +91,7 @@ pub fn start() -> Result<(), JsValue> {
         initial_rows as u32,
         grids.clone(),
         render_state.clone(),
-        highlights.clone(),
+        highlights,
     )?;
 
     // Expose WS to window for debugging
@@ -107,14 +115,14 @@ pub fn start() -> Result<(), JsValue> {
         .unwrap()
         .dyn_into::<web_sys::HtmlElement>()?;
 
-    // Phase 9.1.2: Input queue and listeners (keyboard, mouse, touch, ime, paste)
+    // Input queue and listeners (keyboard, mouse, touch, ime, paste)
     let _input_queue = input::setup_input_listeners(
         &ws,
         &canvas,
         &editor_root,
-        grids.clone(),
-        renderer.clone(),
-        render_state.clone(),
+        &grids,
+        &renderer,
+        &render_state,
     )?;
 
     // Focus the wrapper on startup

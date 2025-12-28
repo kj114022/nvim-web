@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+
 
 /// Known internal RPC methods
 pub enum InternalMethod {
@@ -37,18 +37,19 @@ impl From<&str> for InternalMethod {
     }
 }
 
-impl ToString for InternalMethod {
-    fn to_string(&self) -> String {
-        match self {
-            Self::VfsOpen => "vfs_open".to_string(),
-            Self::VfsWrite => "vfs_write".to_string(),
-            Self::VfsList => "vfs_list".to_string(),
-            Self::SettingsGet => "settings_get".to_string(),
-            Self::SettingsSet => "settings_set".to_string(),
-            Self::SettingsAll => "settings_all".to_string(),
-            Self::GetCwdInfo => "get_cwd_info".to_string(),
-            Self::ClipboardReadResponse => "clipboard_read_response".to_string(),
-            Self::Unknown(s) => s.clone(),
-        }
+impl std::fmt::Display for InternalMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::VfsOpen => "vfs_open",
+            Self::VfsWrite => "vfs_write",
+            Self::VfsList => "vfs_list",
+            Self::SettingsGet => "settings_get",
+            Self::SettingsSet => "settings_set",
+            Self::SettingsAll => "settings_all",
+            Self::GetCwdInfo => "get_cwd_info",
+            Self::ClipboardReadResponse => "clipboard_read_response",
+            Self::Unknown(s) => s,
+        };
+        write!(f, "{s}")
     }
 }

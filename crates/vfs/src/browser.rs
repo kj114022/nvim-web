@@ -15,6 +15,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use rmpv::Value;
 use tokio::sync::{broadcast, oneshot, Mutex};
+use tokio::time::{timeout, Duration};
 
 use super::{FileStat, VfsBackend};
 
@@ -31,7 +32,7 @@ type PendingRequest = oneshot::Sender<Result<Value>>;
 
 /// Registry for pending FS requests
 ///
-/// Shared between BrowserFsBackend and the WebSocket handler.
+/// Shared between `BrowserFsBackend` and the WebSocket handler.
 /// When a request is sent, a oneshot channel is created and stored.
 /// When a response arrives, the corresponding sender is resolved.
 #[derive(Default)]
@@ -55,7 +56,8 @@ impl FsRequestRegistry {
 
     /// Resolve a pending request with a response
     pub async fn resolve(&self, id: u64, result: Result<Value>) {
-        if let Some(tx) = self.pending.lock().await.remove(&id) {
+        let tx = self.pending.lock().await.remove(&id);
+        if let Some(tx) = tx {
             let _ = tx.send(result);
         }
     }
@@ -80,7 +82,7 @@ pub struct BrowserFsBackend {
 }
 
 impl BrowserFsBackend {
-    /// Create a new BrowserFs backend
+    /// Create a new `BrowserFs` backend
     ///
     /// # Arguments
     /// * `namespace` - OPFS namespace (directory root)
@@ -137,7 +139,6 @@ impl BrowserFsBackend {
         }
 
         // Wait for response with timeout
-        use tokio::time::{timeout, Duration};
         match timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => bail!("Request cancelled"),
@@ -201,7 +202,7 @@ impl VfsBackend for BrowserFsBackend {
         if let Value::Array(items) = result {
             let names: Vec<String> = items
                 .into_iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter_map(|v| v.as_str().map(ToString::to_string))
                 .collect();
             Ok(names)
         } else {

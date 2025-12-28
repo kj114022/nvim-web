@@ -1,3 +1,4 @@
+#![allow(clippy::non_std_lazy_statics)]
 //! Project configuration and magic link handling
 //!
 //! Enables opening projects directly in nvim-web from terminal via:
@@ -50,10 +51,10 @@ impl ProjectConfig {
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
                 Ok(content) => match toml::from_str(&content) {
-                    Ok(config) => return config,
-                    Err(e) => eprintln!("  [warn] Failed to parse .nvim-web/config.toml: {}", e),
+                Ok(config) => return config,
+                    Err(e) => eprintln!("  [warn] Failed to parse .nvim-web/config.toml: {e}"),
                 },
-                Err(e) => eprintln!("  [warn] Failed to read .nvim-web/config.toml: {}", e),
+                Err(e) => eprintln!("  [warn] Failed to read .nvim-web/config.toml: {e}"),
             }
         }
         Self::default()
@@ -72,10 +73,10 @@ impl ProjectConfig {
 
     /// Get the working directory (resolved to absolute path)
     pub fn resolved_cwd(&self, project_path: &Path) -> PathBuf {
-        match &self.editor.cwd {
-            Some(cwd) => project_path.join(cwd),
-            None => project_path.to_path_buf(),
-        }
+        self.editor.cwd.as_ref().map_or_else(
+            || project_path.to_path_buf(),
+            |cwd| project_path.join(cwd)
+        )
     }
 }
 
@@ -119,8 +120,8 @@ pub fn generate_token() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let random = std::process::id() as u128 ^ now;
-    format!("{:x}", random)
+    let random = u128::from(std::process::id()) ^ now;
+    format!("{random:x}")
 }
 
 /// Store a new open token

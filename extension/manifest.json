@@ -18,8 +18,12 @@
   },
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "nativeMessaging"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "http://localhost:8080/*",
     "ws://127.0.0.1:9001/*"

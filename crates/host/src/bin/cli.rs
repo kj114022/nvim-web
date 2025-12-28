@@ -28,10 +28,10 @@ fn main() {
             } else {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
-            open_project(path);
+            open_project(&path);
         }
         "--help" | "-h" | "help" => print_usage(),
-        "--version" | "-v" => println!("nvim-web {}", VERSION),
+        "--version" | "-v" => println!("nvim-web {VERSION}"),
         _ => {
             eprintln!("Unknown command: {}", args[1]);
             print_usage();
@@ -54,15 +54,14 @@ fn print_usage() {
     eprintln!();
 }
 
-fn open_project(path: PathBuf) {
+fn open_project(path: &std::path::Path) {
     // Resolve to absolute path
     let abs_path = match path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
             eprintln!(
-                "\x1b[1;31m[error]\x1b[0m Path not found: {} ({})",
-                path.display(),
-                e
+                "\x1b[1;31m[error]\x1b[0m Path not found: {} ({e})",
+                path.display()
             );
             return;
         }
@@ -74,7 +73,7 @@ fn open_project(path: PathBuf) {
 
     // Call the API to create a token
     let client = reqwest::blocking::Client::new();
-    let api_url = format!("{}/api/open", DEFAULT_HOST);
+    let api_url = format!("{DEFAULT_HOST}/api/open");
 
     let response = match client
         .post(&api_url)
@@ -89,7 +88,7 @@ fn open_project(path: PathBuf) {
             eprintln!();
             eprintln!("  Start it with: \x1b[1mnvim-web-host\x1b[0m");
             eprintln!();
-            eprintln!("  \x1b[2mDetails: {}\x1b[0m", e);
+            eprintln!("  \x1b[2mDetails: {e}\x1b[0m");
             return;
         }
     };
@@ -99,8 +98,7 @@ fn open_project(path: PathBuf) {
         let body = response.text().unwrap_or_default();
         eprintln!();
         eprintln!(
-            "  \x1b[1;31m[error]\x1b[0m API error: {} - {}",
-            status, body
+            "  \x1b[1;31m[error]\x1b[0m API error: {status} - {body}"
         );
         return;
     }
@@ -109,7 +107,7 @@ fn open_project(path: PathBuf) {
     let data: serde_json::Value = match response.json() {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("  \x1b[1;31m[error]\x1b[0m Invalid API response: {}", e);
+            eprintln!("  \x1b[1;31m[error]\x1b[0m Invalid API response: {e}");
             return;
         }
     };
@@ -123,10 +121,10 @@ fn open_project(path: PathBuf) {
         return;
     }
 
-    eprintln!("  \x1b[2mProject:\x1b[0m {}", name);
+    eprintln!("  \x1b[2mProject:\x1b[0m {name}");
     eprintln!();
     eprintln!("  \x1b[1;32m[success]\x1b[0m Opening in browser...");
-    eprintln!("  \x1b[4;96m{}\x1b[0m", url);
+    eprintln!("  \x1b[4;96m{url}\x1b[0m");
     eprintln!();
 
     // Open browser

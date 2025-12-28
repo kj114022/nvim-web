@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-/// Highlight attributes from hl_attr_define
+/// Highlight attributes from `hl_attr_define`
 #[derive(Clone, Default)]
 pub struct HighlightAttr {
     pub fg: Option<u32>,  // RGB color
@@ -22,7 +22,7 @@ impl HighlightMap {
         }
     }
 
-    /// Store a highlight definition from hl_attr_define
+    /// Store a highlight definition from `hl_attr_define`
     pub fn define(&mut self, id: u32, attr: HighlightAttr) {
         self.attrs.insert(id, attr);
     }

@@ -7,13 +7,13 @@ use rmpv::Value;
 
 use crate::grid::GridManager;
 use crate::highlight::HighlightMap;
-use crate::renderer::Renderer;
+
 use crate::render::RenderState;
-use crate::dom::{set_status, show_toast, update_drawer_session, update_drawer_cwd_info};
+use crate::dom::{update_drawer_session, update_drawer_cwd_info};
 use crate::opfs::js_handle_fs_request;
 use crate::events::apply_redraw;
 
-/// Handle incoming MessagePack message
+/// Handle incoming `MessagePack` message
 pub async fn handle_message(
     msg: Value,
     grids: Rc<RefCell<GridManager>>,
@@ -37,7 +37,7 @@ pub async fn handle_message(
                 
                 // Type 1: RPC Response
                 if msg_type.as_i64() == Some(1) {
-                     handle_rpc_response(arr, ws).await;
+                     handle_rpc_response(arr);
                      return;
                 }
             }
@@ -49,13 +49,13 @@ pub async fn handle_message(
             if let Value::String(ref method) = arr[0] {
                 // Session: ["session", id]
                 if method.as_str() == Some("session") {
-                     handle_session_message(arr, ws).await;
+                     handle_session_message(arr, &ws);
                      return;
                 }
                 
                 // Cwd Info Push: ["cwd_info", {...}]
                 if method.as_str() == Some("cwd_info") {
-                    handle_cwd_info_push(arr).await;
+                    handle_cwd_info_push(arr);
                     return;
                 }
             }
@@ -67,7 +67,7 @@ pub async fn handle_message(
     render_state.request_render();
 }
 
-async fn handle_fs_request(arr: &Vec<Value>, request_id: u32, ws: WebSocket) {
+async fn handle_fs_request(arr: &[Value], request_id: u32, ws: WebSocket) {
     // Parse Payload: [2, id, [op, ns, path, data?]]
     if let Value::Array(ref payload) = arr[2] {
         if payload.len() >= 3 {
@@ -81,7 +81,7 @@ async fn handle_fs_request(arr: &Vec<Value>, request_id: u32, ws: WebSocket) {
                 } else { None }
             } else { None };
             
-            web_sys::console::log_1(&format!("FS: Request id={} op={} ns={} path={}", request_id, op, ns, path).into());
+            web_sys::console::log_1(&format!("FS: Request id={request_id} op={op} ns={ns} path={path}").into());
 
             // Prepare JS data
             let js_data = data.map(|bytes| {
@@ -108,7 +108,7 @@ async fn handle_fs_request(arr: &Vec<Value>, request_id: u32, ws: WebSocket) {
                              msgpack_result,
                          ])
                      } else {
-                         let error = js_sys::Reflect::get(&js_result, &"error".into()).ok().and_then(|v| v.as_string()).unwrap_or("Unknown error".to_string());
+                         let error = js_sys::Reflect::get(&js_result, &"error".into()).ok().and_then(|v| v.as_string()).unwrap_or_else(|| "Unknown error".to_string());
                           Value::Array(vec![
                              Value::Integer(3.into()),
                              Value::Integer((request_id as i64).into()),
@@ -118,7 +118,7 @@ async fn handle_fs_request(arr: &Vec<Value>, request_id: u32, ws: WebSocket) {
                      }
                 }
                 Err(e) => {
-                     let error = e.as_string().unwrap_or("JS exception".to_string());
+                     let error = e.as_string().unwrap_or_else(|| "JS exception".to_string());
                      Value::Array(vec![
                         Value::Integer(3.into()),
                         Value::Integer((request_id as i64).into()),
@@ -156,40 +156,36 @@ fn convert_js_to_msgpack(val: Option<JsValue>) -> Value {
     }
 }
 
-async fn handle_rpc_response(arr: &Vec<Value>, ws: WebSocket) {
+fn handle_rpc_response(arr: &[Value]) {
     if arr.len() < 4 { return; }
     let id = arr[1].as_i64().unwrap_or(0);
     let error = &arr[2];
     let result = &arr[3];
     
     // ID 1: Settings
-    if id == 1 {
-        if error.is_nil() {
-            if let Value::Map(ref settings) = result {
-                for (k, v) in settings {
-                    if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
-                         web_sys::console::log_1(&format!("SETTING: {}={}", key, val).into());
-                    }
+    if id == 1 && error.is_nil() {
+        if let Value::Map(ref settings) = result {
+            for (k, v) in settings {
+                if let (Some(key), Some(val)) = (k.as_str(), v.as_str()) {
+                     web_sys::console::log_1(&format!("SETTING: {key}={val}").into());
                 }
             }
         }
     }
     
     // ID 2: CWD Info
-    if id == 2 {
-        if error.is_nil() {
-             process_cwd_info(result);
-        }
+    if id == 2 && error.is_nil() {
+        process_cwd_info(result);
     }
 }
 
-async fn handle_session_message(arr: &Vec<Value>, ws: WebSocket) {
+fn handle_session_message(arr: &[Value], ws: &WebSocket) {
     if let Value::String(ref session_id) = arr[1] {
         if let Some(id) = session_id.as_str() {
              // Reconnection logic
              let is_reconnection = if let Ok(Some(storage)) = window().unwrap().local_storage() {
                 let existing = storage.get_item("nvim_session_id").ok().flatten();
-                let is_recon = existing.as_ref().map(|e| e == id).unwrap_or(false);
+                let is_recon = existing.as_ref().is_some_and(|e| e == id);
                 let _ = storage.set_item("nvim_session_id", id);
                 is_recon
             } else { false };
@@ -211,7 +207,7 @@ async fn handle_session_message(arr: &Vec<Value>, ws: WebSocket) {
     }
 }
 
-async fn handle_cwd_info_push(arr: &Vec<Value>) {
+fn handle_cwd_info_push(arr: &[Value]) {
     if let Value::Map(ref info) = arr[1] {
         process_cwd_info(&Value::Map(info.clone()));
     }
@@ -229,7 +225,7 @@ fn process_cwd_info(val: &Value) {
                 Some("cwd") => cwd = value.as_str().unwrap_or("~").to_string(),
                 Some("file") => file = value.as_str().unwrap_or("").to_string(),
                 Some("backend") => backend = value.as_str().unwrap_or("local").to_string(),
-                Some("git_branch") => git_branch = value.as_str().map(|s| s.to_string()),
+                Some("git_branch") => git_branch = value.as_str().map(ToString::to_string),
                 _ => {}
             }
         }

@@ -8,7 +8,7 @@ pub struct SessionConfig {
     pub open_token: Option<String>,
 }
 
-/// Initialize session from URL params and LocalStorage
+/// Initialize session from URL params and `LocalStorage`
 ///
 /// Handles:
 /// - Parsing ?session= and ?open=
@@ -26,7 +26,7 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
         search_clean.split('&')
             .find(|p| p.starts_with("session="))
             .and_then(|p| p.strip_prefix("session="))
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
     } else {
         None
     };
@@ -37,15 +37,15 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
         search_clean.split('&')
             .find(|p| p.starts_with("open="))
             .and_then(|p| p.strip_prefix("open="))
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
     } else {
         None
     };
     
     // If we have an open token, notify user
     if let Some(ref token) = open_token {
-        web_sys::console::log_1(&format!("MAGIC LINK: Claiming token {}", token).into());
-        show_toast(&format!("Opening project..."));
+        web_sys::console::log_1(&format!("MAGIC LINK: Claiming token {token}").into());
+        show_toast("Opening project...");
     }
     
     // Determine session ID: URL param takes priority over localStorage
@@ -60,8 +60,8 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
         }
         Some(ref id) => {
             // Join specific session from URL
-            web_sys::console::log_1(&format!("SESSION: Joining session {} (URL param)", id).into());
-            (format!("ws://127.0.0.1:9001?session={}", id), true)
+            web_sys::console::log_1(&format!("SESSION: Joining session {id} (URL param)").into());
+            (format!("ws://127.0.0.1:9001?session={id}"), true)
         }
         None if open_token.is_some() => {
             // Magic link - always create new session
@@ -74,16 +74,16 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
                 .and_then(|s| s.get_item("nvim_session_id").ok())
                 .flatten();
             
-            match existing_session {
-                Some(ref id) => {
-                    web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
-                    (format!("ws://127.0.0.1:9001?session={}", id), false)
-                }
-                None => {
+            existing_session.as_ref().map_or_else(
+                || {
                     web_sys::console::log_1(&"SESSION: Creating new session".into());
                     ("ws://127.0.0.1:9001?session=new".to_string(), false)
-                }
-            }
+                },
+                |id| {
+                    web_sys::console::log_1(&format!("SESSION: Reconnecting to session {id}").into());
+                    (format!("ws://127.0.0.1:9001?session={id}"), false)
+                },
+            )
         }
     };
     
@@ -102,6 +102,7 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
 }
 
 /// Force new session (clears storage and connection info)
+#[allow(dead_code)]
 pub fn force_new_session(win: &Window) {
     if let Some(storage) = win.local_storage().ok().flatten() {
         let _ = storage.remove_item("nvim_session_id");

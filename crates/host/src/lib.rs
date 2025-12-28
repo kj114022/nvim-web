@@ -1,5 +1,6 @@
 // nvim-web-host library
 // Async Neovim GUI host using nvim-rs and tokio
+pub mod native;
 
 // Core async modules
 pub mod session;
