@@ -1,0 +1,20 @@
+[package]
+name = "nvim-web-vfs"
+description = "Virtual Filesystem layer for nvim-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Dependencies extracted from host/src/vfs usage
+anyhow.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+dirs.workspace = true
+ssh2 = "0.9"
+rmpv.workspace = true
+lazy_static.workspace = true 
+
+[lints]
+workspace = true

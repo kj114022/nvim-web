@@ -4,6 +4,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/vfs",
     "crates/protocol",
     "crates/host",
     "crates/ui",

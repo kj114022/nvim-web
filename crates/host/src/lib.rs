@@ -6,7 +6,8 @@ pub mod session;
 pub mod ws;
 
 // Virtual filesystem layer
-pub mod vfs;
+// pub mod vfs;
+pub use nvim_web_vfs as vfs;
 pub mod vfs_handlers;
 
 // Configuration
