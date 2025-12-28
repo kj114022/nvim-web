@@ -716,6 +716,123 @@
     .onboarding-btn:active {
       transform: scale(0.98);
     }
+
+    /* Mobile-specific styles */
+    @media (max-width: 768px) {
+      /* Larger touch targets */
+      .drawer-bar {
+        height: 44px;
+        padding: 0 16px;
+        gap: 8px;
+      }
+      
+      .drawer-toggle {
+        padding: 12px 16px;
+        font-size: 14px;
+      }
+      
+      /* Hide less important items on small screens */
+      .drawer-item.session {
+        display: none;
+      }
+      
+      .drawer-sep {
+        display: none;
+      }
+      
+      /* Larger status indicator */
+      #nvim-status {
+        width: 10px;
+        height: 10px;
+      }
+      
+      /* Adjust editor area for larger drawer */
+      #editor-root {
+        height: calc(100vh - 44px);
+      }
+      
+      /* Collapsed drawer height */
+      #nvim-drawer.collapsed {
+        height: 44px;
+      }
+      
+      /* Onboarding adjustments */
+      .onboarding-box {
+        padding: 24px 20px;
+        margin: 16px;
+        max-width: calc(100vw - 32px);
+      }
+      
+      .onboarding-option {
+        padding: 16px;
+      }
+      
+      /* Larger buttons for touch */
+      .drawer-actions button,
+      .widget-actions button {
+        padding: 12px 18px;
+        font-size: 14px;
+      }
+    }
+    
+    /* Very small screens (phones in portrait) */
+    @media (max-width: 480px) {
+      .drawer-item.cwd {
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .drawer-item.file {
+        max-width: 80px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .drawer-item.git {
+        display: none;
+      }
+    }
+    
+    /* Touch device optimizations */
+    @media (pointer: coarse) {
+      /* Disable hover effects that cause issues on touch */
+      .drawer-bar:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      
+      /* Ensure tap targets are at least 44px */
+      .menu-item {
+        padding: 12px 20px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+      }
+      
+      /* Disable text selection on UI elements */
+      .drawer-bar,
+      .drawer-toggle,
+      .onboarding-option {
+        -webkit-user-select: none;
+        user-select: none;
+      }
+    }
+    
+    /* iOS safe area support */
+    @supports (padding: env(safe-area-inset-bottom)) {
+      #nvim-drawer {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      
+      #editor-root {
+        padding-top: env(safe-area-inset-top);
+      }
+    }
+    
+    /* Prevent pull-to-refresh on mobile */
+    body {
+      overscroll-behavior: none;
+    }
   </style>
 </head>
 

@@ -17,6 +17,11 @@ const FOCUS_LOST_OVERLAY: &str = "rgba(0, 0, 0, 0.08)";
 // Cursor color
 const CURSOR_COLOR: &str = "#ff6600";
 
+// Cursor animation constants
+const CURSOR_BLINK_ON_MS: f64 = 530.0;
+const CURSOR_BLINK_OFF_MS: f64 = 530.0;
+const CURSOR_ANIMATION_DURATION_MS: f64 = 80.0;
+
 /// Convert RGB u32 to CSS string
 fn rgb_to_css(rgb: u32) -> String {
     format!(
@@ -25,6 +30,88 @@ fn rgb_to_css(rgb: u32) -> String {
         (rgb >> 8) & 0xff,
         rgb & 0xff
     )
+}
+
+/// Cursor animation state for smooth movement and blinking
+#[derive(Clone)]
+struct CursorState {
+    // Target position (where Neovim says cursor is)
+    target_col: f64,
+    target_row: f64,
+    // Current animated position
+    current_col: f64,
+    current_row: f64,
+    // Animation timing
+    move_start_time: f64,
+    move_start_col: f64,
+    move_start_row: f64,
+    // Blink state
+    last_move_time: f64,
+    blink_visible: bool,
+}
+
+impl Default for CursorState {
+    fn default() -> Self {
+        Self {
+            target_col: 0.0,
+            target_row: 0.0,
+            current_col: 0.0,
+            current_row: 0.0,
+            move_start_time: 0.0,
+            move_start_col: 0.0,
+            move_start_row: 0.0,
+            last_move_time: 0.0,
+            blink_visible: true,
+        }
+    }
+}
+
+impl CursorState {
+    /// Update cursor target position, trigger animation if moved
+    fn set_target(&mut self, col: usize, row: usize, now: f64) {
+        let new_col = col as f64;
+        let new_row = row as f64;
+        
+        // Only trigger animation if position changed
+        if (new_col - self.target_col).abs() > 0.01 || (new_row - self.target_row).abs() > 0.01 {
+            self.move_start_time = now;
+            self.move_start_col = self.current_col;
+            self.move_start_row = self.current_row;
+            self.target_col = new_col;
+            self.target_row = new_row;
+            self.last_move_time = now;
+            self.blink_visible = true; // Reset blink on move
+        }
+    }
+    
+    /// Update animation state, returns (col, row, visible)
+    fn update(&mut self, now: f64) -> (f64, f64, bool) {
+        // Smooth position interpolation
+        let elapsed = now - self.move_start_time;
+        let t = (elapsed / CURSOR_ANIMATION_DURATION_MS).min(1.0);
+        let ease_t = ease_out_quad(t);
+        
+        self.current_col = self.move_start_col + (self.target_col - self.move_start_col) * ease_t;
+        self.current_row = self.move_start_row + (self.target_row - self.move_start_row) * ease_t;
+        
+        // Blink logic (only after cursor has been still for a moment)
+        let time_since_move = now - self.last_move_time;
+        if time_since_move > 300.0 {
+            // Start blinking after 300ms of stillness
+            let blink_cycle = CURSOR_BLINK_ON_MS + CURSOR_BLINK_OFF_MS;
+            let cycle_pos = (time_since_move - 300.0) % blink_cycle;
+            self.blink_visible = cycle_pos < CURSOR_BLINK_ON_MS;
+        } else {
+            self.blink_visible = true;
+        }
+        
+        (self.current_col, self.current_row, self.blink_visible)
+    }
+}
+
+/// Ease-out quadratic for smooth cursor animation
+fn ease_out_quad(t: f64) -> f64 {
+    1.0 - (1.0 - t) * (1.0 - t)
 }
 
 #[derive(Clone)]
@@ -39,6 +126,8 @@ pub struct Renderer {
     // Color caches to avoid per-cell allocations
     cached_fg: Rc<RefCell<Option<(u32, String)>>>,
     cached_bg: Rc<RefCell<Option<(u32, String)>>>,
+    // Cursor animation state
+    cursor_state: Rc<RefCell<CursorState>>,
 }
 
 impl Renderer {
@@ -72,6 +161,7 @@ impl Renderer {
             dpr,
             cached_fg: Rc::new(RefCell::new(None)),
             cached_bg: Rc::new(RefCell::new(None)),
+            cursor_state: Rc::new(RefCell::new(CursorState::default())),
         }
     }
 
@@ -228,14 +318,27 @@ impl Renderer {
             }
         }
 
-        // Cursor (on top of everything except focus overlay)
-        self.ctx.set_fill_style(&CURSOR_COLOR.into());
-        self.ctx.fill_rect(
-            (grid.cursor_col as f64) * self.cell_w,
-            (grid.cursor_row as f64) * self.cell_h,
-            self.cell_w,
-            self.cell_h,
-        );
+        // Animated cursor (on top of everything except focus overlay)
+        // Use js_sys::Date::now() for timing (always available in WASM)
+        let now = js_sys::Date::now();
+        
+        // Update cursor target and get animated state
+        {
+            let mut cursor = self.cursor_state.borrow_mut();
+            cursor.set_target(grid.cursor_col, grid.cursor_row, now);
+        }
+        let (cursor_col, cursor_row, cursor_visible) = self.cursor_state.borrow_mut().update(now);
+        
+        // Draw cursor if visible (blink on)
+        if cursor_visible {
+            self.ctx.set_fill_style(&CURSOR_COLOR.into());
+            self.ctx.fill_rect(
+                cursor_col * self.cell_w,
+                cursor_row * self.cell_h,
+                self.cell_w,
+                self.cell_h,
+            );
+        }
 
         // Focus overlay (after all drawing, if unfocused)
         if !grid.is_focused {
