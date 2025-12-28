@@ -217,6 +217,68 @@
       font-weight: bold;
     }
 
+    /* Sync Indicator */
+    .drawer-item.sync {
+      color: #f1fa8c;
+      animation: syncPulse 1.5s ease-in-out infinite;
+    }
+
+    .drawer-item.sync.hidden {
+      display: none;
+    }
+
+    .sync-icon {
+      font-size: 14px;
+    }
+
+    .sync-count {
+      font-size: 10px;
+      background: rgba(241, 250, 140, 0.2);
+      padding: 1px 5px;
+      border-radius: 8px;
+    }
+
+    @keyframes syncPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Quota Indicator */
+    .drawer-item.quota {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .quota-bar {
+      width: 40px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .quota-fill {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, #50fa7b, #89b4fa);
+      border-radius: 3px;
+      transition: width 0.3s ease, background 0.3s ease;
+    }
+
+    .quota-fill.warning {
+      background: linear-gradient(90deg, #ffb86c, #f1fa8c);
+    }
+
+    .quota-fill.critical {
+      background: linear-gradient(90deg, #ff5555, #ffb86c);
+    }
+
+    .quota-text {
+      font-size: 10px;
+      color: #858585;
+    }
+
     .drawer-sep {
       color: #555;
     }
@@ -900,6 +962,14 @@
     <!-- Status Bar (always visible) -->
     <div class="drawer-bar" id="drawer-bar">
       <div id="nvim-status" class="status-connecting" title="Connection Status"></div>
+      <div id="sync-indicator" class="drawer-item sync hidden" title="Pending writes">
+        <span class="sync-icon">&#8635;</span>
+        <span class="sync-count">0</span>
+      </div>
+      <div id="quota-indicator" class="drawer-item quota" title="Storage usage">
+        <span class="quota-bar"><span class="quota-fill" style="width: 0%"></span></span>
+        <span class="quota-text">-</span>
+      </div>
       <span class="drawer-item backend" id="drawer-backend-badge" title="Storage Backend">LOCAL</span>
       <span class="drawer-item cwd" id="drawer-cwd" title="Working Directory">~</span>
       <span class="drawer-sep">/</span>
