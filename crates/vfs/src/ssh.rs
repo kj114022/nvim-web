@@ -62,24 +62,29 @@ impl SshFsBackend {
     /// Get a pooled connection or create a new one
     ///
     /// Connections are cached by "user@host:port" and reused for 5 minutes.
+    /// Connections are health-checked before reuse; stale connections are replaced.
     pub fn get_or_connect(uri: &str) -> Result<Arc<Self>> {
         let parsed = Self::parse_ssh_uri(uri)?;
         let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
 
-        // Try to get from pool
+        // Try to get from pool and verify it's still alive
         {
             let pool = SSH_POOL
                 .read()
                 .map_err(|_| anyhow::anyhow!("SSH pool lock poisoned"))?;
             if let Some(entry) = pool.get(&pool_key) {
                 if entry.last_used.elapsed() < POOL_TTL {
-                    eprintln!("  [ssh] Reusing pooled connection to {pool_key}");
-                    return Ok(entry.backend.clone());
+                    // Health check: verify connection is still alive
+                    if entry.backend.is_alive() {
+                        eprintln!("  [ssh] Reusing pooled connection to {pool_key}");
+                        return Ok(entry.backend.clone());
+                    }
+                    eprintln!("  [ssh] Pooled connection to {pool_key} is stale, reconnecting");
                 }
             }
         }
 
-        // Create new connection
+        // Create new connection (or reconnect)
         eprintln!("  [ssh] Creating new connection to {pool_key}");
         let backend = Arc::new(Self::connect_new(&parsed)?);
 
@@ -102,6 +107,16 @@ impl SshFsBackend {
         }
 
         Ok(backend)
+    }
+
+    /// Check if the SSH connection is still alive
+    pub fn is_alive(&self) -> bool {
+        if let Ok(inner) = self.inner.lock() {
+            // Try to stat the root directory as a health check
+            inner.sftp.stat(Path::new("/")).is_ok()
+        } else {
+            false
+        }
     }
 
     /// Touch connection (update last-used timestamp)
