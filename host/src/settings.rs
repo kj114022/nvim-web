@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 /// Settings storage backed by SQLite
 pub struct SettingsStore {
@@ -22,12 +22,10 @@ impl SettingsStore {
 
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
 
-        let conn = Connection::open(&db_path)
-            .context("Failed to open settings database")?;
+        let conn = Connection::open(&db_path).context("Failed to open settings database")?;
 
         // Initialize schema
         conn.execute(
@@ -44,19 +42,16 @@ impl SettingsStore {
 
     /// Get database path
     fn db_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Could not determine config directory")?;
+        let config_dir = dirs::config_dir().context("Could not determine config directory")?;
         Ok(config_dir.join("nvim-web").join("settings.db"))
     }
 
     /// Get a single setting
     pub fn get(&self, key: &str) -> Option<String> {
         self.conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?",
-                [key],
-                |row| row.get(0),
-            )
+            .query_row("SELECT value FROM settings WHERE key = ?", [key], |row| {
+                row.get(0)
+            })
             .ok()
     }
 
@@ -72,10 +67,8 @@ impl SettingsStore {
 
     /// Delete a setting
     pub fn delete(&self, key: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM settings WHERE key = ?",
-            [key],
-        )?;
+        self.conn
+            .execute("DELETE FROM settings WHERE key = ?", [key])?;
         Ok(())
     }
 
@@ -125,8 +118,9 @@ pub fn defaults() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn test_settings_crud() {
@@ -141,7 +135,8 @@ mod tests {
                 updated_at INTEGER
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let store = SettingsStore { conn };
 
@@ -171,7 +166,8 @@ mod tests {
                 updated_at INTEGER
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let store = SettingsStore { conn };
 

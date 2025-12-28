@@ -62,11 +62,13 @@ impl VfsManager {
     pub async fn read_file(&self, vfs_path: &str) -> Result<Vec<u8>> {
         let (backend_name, path) = self.parse_vfs_path(vfs_path)?;
 
-        // SSH backend is created dynamically because connection info is in URI
+        // SSH backend uses connection pooling for performance
         if backend_name == "ssh" {
             use super::SshFsBackend;
-            let backend = SshFsBackend::connect(vfs_path)?;
-            return backend.read(&path).await;
+            let backend = SshFsBackend::get_or_connect(vfs_path)?;
+            let result = backend.read(&path).await;
+            backend.touch(); // Keep connection alive
+            return result;
         }
 
         let backend = self
@@ -81,11 +83,13 @@ impl VfsManager {
     pub async fn write_file(&self, vfs_path: &str, data: &[u8]) -> Result<()> {
         let (backend_name, path) = self.parse_vfs_path(vfs_path)?;
 
-        // SSH backend is created dynamically because connection info is in URI
+        // SSH backend uses connection pooling for performance
         if backend_name == "ssh" {
             use super::SshFsBackend;
-            let backend = SshFsBackend::connect(vfs_path)?;
-            return backend.write(&path, data).await;
+            let backend = SshFsBackend::get_or_connect(vfs_path)?;
+            let result = backend.write(&path, data).await;
+            backend.touch(); // Keep connection alive
+            return result;
         }
 
         let backend = self

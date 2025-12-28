@@ -26,7 +26,7 @@ pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
     } else {
         path.trim_start_matches('/')
     };
-    
+
     UiAssets::get(path).map(|file| {
         let mime = mime_guess::from_path(path)
             .first_raw()
@@ -43,7 +43,7 @@ mod tests {
     fn test_index_html_exists() {
         assert!(UiAssets::get("index.html").is_some());
     }
-    
+
     #[test]
     fn test_get_asset() {
         let (data, mime) = get_asset("index.html").expect("index.html should exist");

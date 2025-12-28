@@ -18,6 +18,7 @@ features = [
   "CanvasRenderingContext2d",
   "ClipboardEvent",
   "CloseEvent",
+  "CssStyleDeclaration",
   "DataTransfer",
   "Document",
   "DomRect",
@@ -47,6 +48,13 @@ features = [
   "ResizeObserver",
   "ResizeObserverEntry",
   "DomRectReadOnly",
+  "Navigator",
+  "Clipboard",
+  "Headers",
+  "Request",
+  "RequestInit",
+  "RequestMode",
+  "Response",
 ]
 
 

@@ -30,18 +30,31 @@ pub fn generate_session_id() -> SessionId {
 /// The writer type used by nvim-rs with tokio
 pub type NvimWriter = Compat<ChildStdin>;
 
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::oneshot;
+
+/// Map of pending request IDs to their response/completion channels
+pub type RequestMap = Arc<Mutex<HashMap<u32, oneshot::Sender<Value>>>>;
+
 /// Handler for Neovim notifications - forwards redraw events to broadcast channel
 #[derive(Clone)]
 pub struct RedrawHandler {
     redraw_tx: broadcast::Sender<Vec<u8>>,
+    requests: RequestMap,
     #[allow(dead_code)] // Kept for debugging purposes
     session_id: String,
 }
 
 impl RedrawHandler {
-    pub fn new(session_id: String, redraw_tx: broadcast::Sender<Vec<u8>>) -> Self {
+    pub fn new(
+        session_id: String,
+        redraw_tx: broadcast::Sender<Vec<u8>>,
+        requests: RequestMap,
+    ) -> Self {
         Self {
             redraw_tx,
+            requests,
             session_id,
         }
     }
@@ -50,6 +63,58 @@ impl RedrawHandler {
 #[async_trait]
 impl Handler for RedrawHandler {
     type Writer = NvimWriter;
+
+    async fn handle_request(
+        &self,
+        name: String,
+        _args: Vec<Value>,
+        _neovim: Neovim<Self::Writer>,
+    ) -> Result<Value, Value> {
+        if name == "clipboard_read" {
+            // Args: [regtype] (unneeded for browser usually, but good to have)
+            // Generate request ID
+            let req_id = rand::random::<u32>(); // Simple random ID
+
+            // Create channel
+            let (tx, rx) = oneshot::channel();
+
+            // Store sender
+            {
+                let mut map = self.requests.lock().unwrap();
+                map.insert(req_id, tx);
+            }
+
+            // Send request to browser
+            // Format: [2, "clipboard_read", [req_id]]
+            // Using Type 2 (Notification) mechanism with specific method
+            let msg = Value::Array(vec![
+                Value::Integer(2.into()),
+                Value::String("clipboard_read".into()),
+                Value::Array(vec![Value::Integer(req_id.into())]),
+            ]);
+
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                let _ = self.redraw_tx.send(bytes);
+            } else {
+                return Err(Value::String("Failed to encode clipboard request".into()));
+            }
+
+            // Wait for response with timeout
+            match tokio::time::timeout(Duration::from_secs(5), rx).await {
+                Ok(Ok(val)) => return Ok(val),
+                Ok(Err(_)) => return Err(Value::String("Clipboard request channel closed".into())),
+                Err(_) => {
+                    // Timeout - ensure we remove the sender
+                    let mut map = self.requests.lock().unwrap();
+                    map.remove(&req_id);
+                    return Err(Value::String("Clipboard request timed out".into()));
+                }
+            }
+        }
+
+        Err(Value::String(format!("Unknown request: {}", name).into()))
+    }
 
     async fn handle_notify(&self, name: String, args: Vec<Value>, _neovim: Neovim<Self::Writer>) {
         if name == "redraw" {
@@ -66,36 +131,48 @@ impl Handler for RedrawHandler {
                 // Broadcast to all connected clients for this session
                 let _ = self.redraw_tx.send(bytes);
             }
+        } else if name == "clipboard_write" {
+            // Args: [lines (Array), regtype (String)]
+            // Send to browser: [2, "clipboard_write", [lines, regtype]]
+            let msg = Value::Array(vec![
+                Value::Integer(2.into()),
+                Value::String("clipboard_write".into()),
+                Value::Array(args),
+            ]);
+
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                let _ = self.redraw_tx.send(bytes);
+            }
         } else if name == "cwd_changed" {
             // Real-time CWD sync: [cwd, file, backend, git_branch]
-            let cwd = args.first()
-                .and_then(|v| v.as_str())
-                .unwrap_or("~");
-            let file = args.get(1)
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let backend = args.get(2)
-                .and_then(|v| v.as_str())
-                .unwrap_or("local");
-            let git_branch = args.get(3)
+            let cwd = args.first().and_then(|v| v.as_str()).unwrap_or("~");
+            let file = args.get(1).and_then(|v| v.as_str()).unwrap_or("");
+            let backend = args.get(2).and_then(|v| v.as_str()).unwrap_or("local");
+            let git_branch = args
+                .get(3)
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            
+
             // Build cwd_info message for UI
             // Format: ["cwd_info", {cwd, file, backend, git_branch}]
             let info_map = vec![
                 (Value::String("cwd".into()), Value::String(cwd.into())),
                 (Value::String("file".into()), Value::String(file.into())),
-                (Value::String("backend".into()), Value::String(backend.into())),
-                (Value::String("git_branch".into()), 
-                 git_branch.map(|b| Value::String(b.into())).unwrap_or(Value::Nil)),
+                (
+                    Value::String("backend".into()),
+                    Value::String(backend.into()),
+                ),
+                (
+                    Value::String("git_branch".into()),
+                    git_branch
+                        .map(|b| Value::String(b.into()))
+                        .unwrap_or(Value::Nil),
+                ),
             ];
-            
-            let msg = Value::Array(vec![
-                Value::String("cwd_info".into()),
-                Value::Map(info_map),
-            ]);
-            
+
+            let msg = Value::Array(vec![Value::String("cwd_info".into()), Value::Map(info_map)]);
+
             let mut bytes = Vec::new();
             if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
                 let _ = self.redraw_tx.send(bytes);
@@ -110,9 +187,11 @@ pub struct AsyncSession {
     pub id: SessionId,
     pub nvim: Neovim<NvimWriter>,
     pub redraw_tx: broadcast::Sender<Vec<u8>>,
+    pub connections: u32, // Track active WebSocket connections
     pub created_at: Instant,
     pub last_active: Instant,
     pub connected: bool,
+    pub requests: RequestMap,
 }
 
 impl AsyncSession {
@@ -124,18 +203,34 @@ impl AsyncSession {
         // Create broadcast channel for redraw events
         let (redraw_tx, _) = broadcast::channel::<Vec<u8>>(256);
 
+        // Create shared request map for host<->browser RPC
+        let requests = Arc::new(Mutex::new(HashMap::new()));
+
         // Create handler that forwards redraws
-        let handler = RedrawHandler::new(id.clone(), redraw_tx.clone());
+        let handler = RedrawHandler::new(id.clone(), redraw_tx.clone(), requests.clone());
 
         // Spawn neovim using nvim-rs
         // --embed: Use stdin/stdout for msgpack RPC
         // User's init.lua will be loaded (includes plugins like vim-fugitive)
         let mut cmd = Command::new("nvim");
         cmd.arg("--embed");
-        
+
         // Set working directory to user's home or current dir
         if let Ok(home) = std::env::var("HOME") {
             cmd.current_dir(&home);
+        }
+
+        // Add plugin to runtime path (development mode)
+        // Checks if we are running from project root and adds 'plugin' dir
+        if let Ok(cwd) = std::env::current_dir() {
+            let plugin_path = cwd.join("plugin");
+            if plugin_path.exists() {
+                eprintln!("SESSION: Adding plugin path: {}", plugin_path.display());
+                cmd.args([
+                    "--cmd",
+                    &format!("set runtimepath+={}", plugin_path.to_string_lossy()),
+                ]);
+            }
         }
 
         let (nvim, io_handler, _child) = new_child_cmd(&mut cmd, handler).await?;
@@ -147,14 +242,11 @@ impl AsyncSession {
             }
         });
 
-        // Attach UI with ext_linegrid (required for modern rendering)
-        // ext_multigrid DISABLED - using single-grid mode for now to avoid ghost text issues
-        // Can be re-enabled after proper multigrid rendering implementation
+        // Attach UI with ext_linegrid for modern grid-based rendering
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
-        // opts.set_multigrid_external(true);  // DISABLED: causes ghost text issues
         nvim.ui_attach(80, 24, &opts).await?;
-        
+
         // Set up minimal Git command if fugitive isn't available
         // Using :command instead of Lua for reliability
         let check_git = nvim.command_output("silent! command Git").await;
@@ -168,20 +260,20 @@ impl AsyncSession {
         } else {
             eprintln!("SESSION: Git command already exists (likely fugitive)");
         }
-        
+
         // Helper: Execute multi-line VimL via nvim_exec2
         async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
             // nvim_exec2(src, opts) - opts is a map with "output" key
-            let opts = vec![
-                (Value::String("output".into()), Value::Boolean(false)),
-            ];
-            nvim.call("nvim_exec2", vec![
-                Value::String(script.into()),
-                Value::Map(opts),
-            ]).await?;
+            let opts = vec![(Value::String("output".into()), Value::Boolean(false))];
+            let _ = nvim
+                .call(
+                    "nvim_exec2",
+                    vec![Value::String(script.into()), Value::Map(opts)],
+                )
+                .await?;
             Ok(())
         }
-        
+
         // Set up VfsStatus command to show current backend/path info
         let vfs_status_cmd = r#"
 command! VfsStatus call NvimWeb_ShowVfsStatus()
@@ -204,7 +296,7 @@ endfunction
         } else {
             eprintln!("SESSION: VfsStatus command registered");
         }
-        
+
         // Set up auto-CD to git root when opening files
         let auto_cd_git = r#"
 augroup NvimWebGitCD
@@ -228,7 +320,7 @@ endfunction
         } else {
             eprintln!("SESSION: Auto-CD to git root enabled");
         }
-        
+
         // Set up real-time CWD sync - notifies host on DirChanged and BufEnter
         let cwd_sync = r#"
 augroup NvimWebCwdSync
@@ -264,6 +356,10 @@ endfunction
             eprintln!("SESSION: CWD sync setup failed: {:?}", e);
         } else {
             eprintln!("SESSION: Real-time CWD sync enabled");
+            // Trigger initial sync
+            if let Err(e) = nvim.command("call NvimWeb_NotifyCwdChanged()").await {
+                eprintln!("SESSION: Initial CWD sync failed: {:?}", e);
+            }
         }
 
         eprintln!("SESSION: Created new async session {}", id);
@@ -276,7 +372,17 @@ endfunction
             created_at: now,
             last_active: now,
             connected: false,
+            connections: 0,
+            requests,
         })
+    }
+
+    /// Complete a pending request (e.g. from clipboard read)
+    pub fn complete_request(&self, req_id: u32, value: Value) {
+        let mut map = self.requests.lock().unwrap();
+        if let Some(tx) = map.remove(&req_id) {
+            let _ = tx.send(value);
+        }
     }
 
     /// Mark this session as active
@@ -308,21 +414,12 @@ endfunction
         Ok(())
     }
 
-    /// Execute an RPC call to Neovim and return the result
-    ///
-    /// This is used for browser-initiated RPC requests that need a response,
-    /// such as getting buffer contents, LSP info, or executing commands.
+    /// Execute RPC call to Neovim and return result
     pub async fn rpc_call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        // Execute RPC call to Neovim
-        // nvim.call().await returns Result<Result<Value, Value>, CallError>
-        // Outer Result: async operation success/failure
-        // Inner Result: Neovim RPC success/error
         let outer_result = self.nvim.call(method, args).await;
 
-        // Flatten the nested Results
         match outer_result {
             Ok(inner_result) => {
-                // inner_result is Result<Value, Value>
                 inner_result
                     .map_err(|err_value| anyhow::anyhow!("Neovim RPC error: {:?}", err_value))
             }
@@ -335,6 +432,8 @@ endfunction
 pub struct AsyncSessionManager {
     sessions: HashMap<SessionId, AsyncSession>,
     pub timeout: Duration,
+    /// Active SSH connection URI (if any)
+    pub active_ssh: Option<String>,
 }
 
 impl AsyncSessionManager {
@@ -342,7 +441,13 @@ impl AsyncSessionManager {
         Self {
             sessions: HashMap::new(),
             timeout: Duration::from_secs(300), // 5 minutes
+            active_ssh: None,
         }
+    }
+
+    /// Set active SSH connection URI
+    pub fn set_active_ssh(&mut self, uri: Option<String>) {
+        self.active_ssh = uri;
     }
 
     /// Create a new session and return its ID
@@ -409,7 +514,7 @@ impl Default for AsyncSessionManager {
 }
 
 /// Session metadata for API responses
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionInfo {
     pub id: String,
     pub name: Option<String>,
@@ -460,7 +565,7 @@ impl AsyncSession {
         let now = Instant::now();
         SessionInfo {
             id: self.id.clone(),
-            name: None, // TODO: Add name field to AsyncSession
+            name: None,
             created_at_secs: self.created_at.elapsed().as_secs(),
             age_secs: now.duration_since(self.created_at).as_secs(),
             connected: self.connected,

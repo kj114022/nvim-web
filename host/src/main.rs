@@ -8,6 +8,7 @@ use axum::{
     routing::get,
     Router,
 };
+use nvim_web_host::api;
 use nvim_web_host::config::Config;
 use nvim_web_host::embedded;
 use nvim_web_host::session::AsyncSessionManager;
@@ -22,19 +23,29 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn print_banner() {
     // Fresh hip-hop inspired banner - cyan vibes, chill energy
     eprintln!();
-    eprintln!("  \x1b[1;36m╔═══════════════════════════════════════════════════════════════════╗\x1b[0m");
-    eprintln!("  \x1b[1;36m║                                                                   ║\x1b[0m");
+    eprintln!(
+        "  \x1b[1;36m╔═══════════════════════════════════════════════════════════════════╗\x1b[0m"
+    );
+    eprintln!(
+        "  \x1b[1;36m║                                                                   ║\x1b[0m"
+    );
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m███╗   ██╗██╗   ██╗██╗███╗   ███╗    ██╗    ██╗███████╗██████╗ \x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m████╗  ██║██║   ██║██║████╗ ████║    ██║    ██║██╔════╝██╔══██╗\x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m██╔██╗ ██║██║   ██║██║██╔████╔██║    ██║ █╗ ██║█████╗  ██████╔╝\x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║    ██║███╗██║██╔══╝  ██╔══██╗\x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║    ╚███╔███╔╝███████╗██████╔╝\x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[1;96m╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝     ╚══╝╚══╝ ╚══════╝╚═════╝ \x1b[1;36m║\x1b[0m");
-    eprintln!("  \x1b[1;36m║                                                                   ║\x1b[0m");
+    eprintln!(
+        "  \x1b[1;36m║                                                                   ║\x1b[0m"
+    );
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[2;37mNeovim in your browser. No cap.\x1b[0m                                 \x1b[1;36m║\x1b[0m");
     eprintln!("  \x1b[1;36m║\x1b[0m  \x1b[2;35mBuilt different. Stay chill. Edit code.\x1b[0m v{:<21}\x1b[1;36m║\x1b[0m", VERSION);
-    eprintln!("  \x1b[1;36m║                                                                   ║\x1b[0m");
-    eprintln!("  \x1b[1;36m╚═══════════════════════════════════════════════════════════════════╝\x1b[0m");
+    eprintln!(
+        "  \x1b[1;36m║                                                                   ║\x1b[0m"
+    );
+    eprintln!(
+        "  \x1b[1;36m╚═══════════════════════════════════════════════════════════════════╝\x1b[0m"
+    );
     eprintln!();
 }
 
@@ -42,10 +53,19 @@ fn print_connection_info(http_port: u16, ws_port: u16, bind: &str, embedded: boo
     if embedded {
         eprintln!("  \x1b[1;32m[vibin]\x1b[0m  Single binary mode - all assets embedded");
     }
-    eprintln!("  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{}\x1b[0m", http_port);
-    eprintln!("  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{}\x1b[0m", ws_port);
+    eprintln!(
+        "  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{}\x1b[0m",
+        http_port
+    );
+    eprintln!(
+        "  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{}\x1b[0m",
+        ws_port
+    );
     eprintln!();
-    eprintln!("  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{}:{}\x1b[0m", bind, http_port);
+    eprintln!(
+        "  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{}:{}\x1b[0m",
+        bind, http_port
+    );
     eprintln!();
     eprintln!("  \x1b[2mPress Ctrl+C to bounce\x1b[0m");
     eprintln!();
@@ -79,13 +99,24 @@ fn startup_checks() -> Result<(), String> {
 
 /// Serve embedded static file
 async fn serve_static(Path(path): Path<String>) -> Response<Body> {
-    let path = if path.is_empty() { "index.html".to_string() } else { path };
-    
+    let path = if path.is_empty() {
+        "index.html".to_string()
+    } else {
+        path
+    };
+
     match embedded::get_asset(&path) {
         Some((data, mime)) => {
+            // Use application/javascript for .js files (override detected mime)
+            let content_type = if path.ends_with(".js") {
+                "application/javascript"
+            } else {
+                mime
+            };
+
             Response::builder()
                 .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, mime)
+                .header(header::CONTENT_TYPE, content_type)
                 .header(header::CACHE_CONTROL, "public, max-age=3600")
                 .body(Body::from(data))
                 .unwrap()
@@ -111,30 +142,27 @@ async fn serve_static(Path(path): Path<String>) -> Response<Body> {
 /// Serve index.html at root
 async fn serve_index() -> Response<Body> {
     match embedded::get_asset("index.html") {
-        Some((data, mime)) => {
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, mime)
-                .body(Body::from(data))
-                .unwrap()
-        }
-        None => {
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("index.html not found"))
-                .unwrap()
-        }
+        Some((data, mime)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime)
+            .body(Body::from(data))
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("index.html not found"))
+            .unwrap(),
     }
 }
 
 /// Handle 'nvim-web open [PATH]' command
 async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
-    use nvim_web_host::project::ProjectConfig;
     use std::path::PathBuf;
-    
+
+    use nvim_web_host::project::ProjectConfig;
+
     // Get path from args, default to current directory
     let path_arg = args.get(2).map(|s| s.as_str()).unwrap_or(".");
-    
+
     // Resolve to absolute path
     let path = if path_arg.starts_with('~') {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -142,29 +170,31 @@ async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     } else {
         PathBuf::from(path_arg)
     };
-    
-    let abs_path = std::fs::canonicalize(&path).map_err(|e| {
-        anyhow::anyhow!("Path '{}' not found: {}", path.display(), e)
-    })?;
-    
+
+    let abs_path = std::fs::canonicalize(&path)
+        .map_err(|e| anyhow::anyhow!("Path '{}' not found: {}", path.display(), e))?;
+
     // Load project config
     let config = ProjectConfig::load(&abs_path);
     let name = config.display_name(&abs_path);
-    
+
     eprintln!();
-    eprintln!("  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{}\x1b[0m", name);
+    eprintln!(
+        "  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{}\x1b[0m",
+        name
+    );
     eprintln!("  \x1b[1;96m[open]\x1b[0m   Path: {}", abs_path.display());
-    
+
     // Generate token
     let token = nvim_web_host::project::store_token(abs_path.clone(), config);
-    
+
     // Build URL
     let url = format!("http://localhost:8080/?open={}", token);
     eprintln!("  \x1b[1;96m[open]\x1b[0m   URL: {}", url);
     eprintln!();
     eprintln!("  \x1b[1;32m>\x1b[0m Opening in browser...");
     eprintln!();
-    
+
     // Open browser
     #[cfg(target_os = "macos")]
     {
@@ -176,16 +206,17 @@ async fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd").args(["/C", "start", &url]).spawn();
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", &url])
+            .spawn();
     }
-    
+
     // Note: The server needs to be running for this to work
     eprintln!("  \x1b[2m(Make sure nvim-web server is running in another terminal)\x1b[0m");
     eprintln!();
-    
+
     Ok(())
 }
-
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -307,7 +338,10 @@ async fn main() -> anyhow::Result<()> {
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     vfs.register_backend("local", Box::new(LocalFs::new(&home_dir)));
     let vfs_manager = Arc::new(RwLock::new(vfs));
-    eprintln!("  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {})", home_dir);
+    eprintln!(
+        "  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {})",
+        home_dir
+    );
 
     print_connection_info(http_port, ws_port, &config.server.bind, true);
 
@@ -317,14 +351,19 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let app_state = api::AppState {
+        session_manager: session_manager.clone(),
+    };
+
     let app = Router::new()
         .route("/", get(serve_index))
         .route("/*path", get(serve_static))
+        .nest("/api", api::api_router(app_state))
         .layer(cors);
 
     let http_addr = format!("{}:{}", config.server.bind, http_port);
     let http_listener = tokio::net::TcpListener::bind(&http_addr).await?;
-    
+
     let http_server = axum::serve(http_listener, app);
 
     // === GRACEFUL SHUTDOWN HANDLER ===

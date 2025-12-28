@@ -1,647 +1,1497 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#89b4fa">
-    <meta name="description" content="Neovim in the Browser - Full Neovim experience with WebSocket bridge">
-    <title>Neovim Web</title>
-    <link rel="manifest" href="/manifest.json">
-    <link rel="icon" type="image/png" href="/icons/icon-192.png">
-    <style>
-      body {
-        margin: 0;
-        padding: 0;
-        background: #1a1a1a;
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      }
-      #editor-root {
-        width: 100vw;
-        height: calc(100vh - 28px);  /* Reserve space for status drawer */
-        outline: none;
-      }
-      #nvim {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-      /* Connection Status Indicator */
-      #nvim-status {
-        position: fixed;
-        bottom: 8px;
-        right: 8px;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#89b4fa">
+  <meta name="description" content="Neovim in the Browser - Full Neovim experience with WebSocket bridge">
+  <title>nvim-web</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #1a1a1a;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    #editor-root {
+      width: 100vw;
+      height: calc(100vh - 28px);
+      /* Reserve space for status drawer */
+      outline: none;
+    }
+
+    #nvim {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Connection Status Indicator (inline in status bar) */
+    #nvim-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: background 0.3s ease;
+    }
+
+    .status-connecting {
+      background: #f1fa8c;
+      animation: pulse 1s infinite;
+    }
+
+    .status-connected {
+      background: #50fa7b;
+    }
+
+    .status-disconnected {
+      background: #ff5555;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
         opacity: 0.8;
-        z-index: 9999;
-        transition: background 0.3s ease;
       }
-      .status-connecting {
-        background: #f1fa8c;
-        animation: pulse 1s infinite;
+
+      50% {
+        opacity: 0.3;
       }
-      .status-connected { background: #50fa7b; }
-      .status-disconnected { background: #ff5555; }
-      @keyframes pulse {
-        0%, 100% { opacity: 0.8; }
-        50% { opacity: 0.3; }
-      }
-      /* Toast Notifications */
-      #nvim-toast {
-        position: fixed;
-        bottom: 24px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #ff5555;
-        color: #f8f8f2;
-        padding: 8px 16px;
-        border-radius: 4px;
-        font-size: 13px;
-        opacity: 0;
-        transition: opacity 0.3s ease;
-        z-index: 9999;
-        pointer-events: none;
-      }
-      #nvim-toast.show { opacity: 0.95; }
-      /* Hidden textarea for IME/mobile input */
-      #nvim-input {
-        position: fixed;
-        left: -9999px;
-        top: 0;
-        width: 1px;
-        height: 1px;
-        opacity: 0;
-        border: none;
-        outline: none;
-        resize: none;
-        overflow: hidden;
-      }
-      /* Dirty state indicator */
-      #nvim-dirty {
-        position: fixed;
-        top: 8px;
-        left: 8px;
-        color: #f1fa8c;
-        font-size: 12px;
-        font-weight: bold;
-        opacity: 0;
-        transition: opacity 0.2s;
-        z-index: 9999;
-      }
-      #nvim-dirty.show { opacity: 0.9; }
-      
-      /* Status Drawer - VS Code Terminal Panel inspired */
-      #nvim-drawer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: #252526;
-        border-top: 1px solid #3c3c3c;
-        font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
-        font-size: 12px;
-        z-index: 1000;
-        transition: height 0.15s ease-out;
-      }
-      #nvim-drawer.collapsed { height: 28px; }
-      #nvim-drawer.expanded { height: 280px; }
-      
-      .drawer-bar {
-        display: flex;
-        align-items: center;
-        height: 28px;
-        padding: 0 12px;
-        gap: 12px;
-        color: #858585;
-        cursor: pointer;
-        user-select: none;
-      }
-      .drawer-bar:hover { background: #2a2d2e; }
-      
-      .drawer-item {
-        white-space: nowrap;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .drawer-item.cwd { color: #9cdcfe; }
-      .drawer-item.file { color: #dcdcaa; }
-      .drawer-item.git { color: #89d185; }
-      .drawer-item.session { color: #569cd6; font-size: 11px; }
-      .drawer-item.modified { color: #ce9178; font-weight: bold; }
-      .drawer-sep { color: #555; }
-      .drawer-spacer { flex: 1; }
-      
-      .drawer-toggle {
-        background: none;
-        border: none;
-        color: #858585;
-        font-size: 10px;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 3px;
-        transition: all 0.15s;
-      }
-      .drawer-toggle:hover { background: #3c3c3c; color: #fff; }
-      #nvim-drawer.expanded .drawer-toggle { transform: rotate(180deg); }
-      
-      .drawer-content {
-        display: none;
-        padding: 12px 16px;
-        overflow-y: auto;
-        height: calc(100% - 28px);
-        background: #1e1e1e;
-      }
-      #nvim-drawer.expanded .drawer-content { display: block; }
-      
-      .drawer-section {
-        margin-bottom: 20px;
-      }
-      .drawer-section h3 {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #858585;
-        margin: 0 0 10px 0;
-        font-weight: 500;
-      }
-      
-      .drawer-actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .drawer-actions button {
-        background: #3c3c3c;
-        border: 1px solid #4c4c4c;
-        color: #ccc;
-        padding: 6px 14px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-        font-family: inherit;
-        transition: all 0.1s;
-      }
-      .drawer-actions button:hover {
-        background: #505050;
-        border-color: #606060;
-        color: #fff;
-      }
-      .drawer-actions button:active {
-        background: #444;
-        transform: scale(0.98);
-      }
-      
-      #drawer-buffers {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        max-height: 120px;
-        overflow-y: auto;
-      }
-      #drawer-buffers li {
-        padding: 6px 10px;
-        cursor: pointer;
-        border-radius: 4px;
-        color: #ccc;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      #drawer-buffers li:hover { background: #2a2d2e; }
-      #drawer-buffers li.active { background: #37373d; color: #fff; }
-      #drawer-buffers .buf-icon { color: #858585; font-size: 11px; }
-      #drawer-buffers .buf-modified { color: #ce9178; }
-      
-      .drawer-info {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 6px 16px;
-        font-size: 11px;
-      }
-      .drawer-info dt { color: #858585; }
-      .drawer-info dd { color: #ccc; margin: 0; }
-      
-      /* Backend badge in drawer status bar */
-      .drawer-item.backend {
-        background: #0e639c;
-        color: #fff;
-        padding: 2px 8px;
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      .drawer-item.backend.browser { background: #6b4c9a; }
-      .drawer-item.backend.ssh { background: #b34045; }
-      
-      /* Onboarding Modal */
-      #nvim-onboarding {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.85);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 10000;
-        backdrop-filter: blur(4px);
-      }
-      #nvim-onboarding.hidden { display: none; }
-      
-      .onboarding-box {
-        background: #252526;
-        border: 1px solid #3c3c3c;
-        border-radius: 8px;
-        padding: 32px 40px;
-        max-width: 420px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
-      }
-      .onboarding-box h2 {
-        margin: 0 0 8px 0;
-        color: #fff;
-        font-size: 20px;
-        font-weight: 500;
-      }
-      .onboarding-box p {
-        margin: 0 0 24px 0;
-        color: #858585;
-        font-size: 13px;
-        line-height: 1.5;
-      }
-      
-      .onboarding-options {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        margin-bottom: 28px;
-      }
-      .onboarding-option {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 14px 16px;
-        background: #1e1e1e;
-        border: 1px solid #3c3c3c;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: all 0.15s;
-      }
-      .onboarding-option:hover { border-color: #0e639c; background: #2a2d2e; }
-      .onboarding-option.selected { border-color: #0e639c; background: #0e639c20; }
-      .onboarding-option input { display: none; }
-      .onboarding-radio {
-        width: 18px;
-        height: 18px;
-        border: 2px solid #858585;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-      }
-      .onboarding-option.selected .onboarding-radio {
-        border-color: #0e639c;
-      }
-      .onboarding-option.selected .onboarding-radio::after {
-        content: '';
-        width: 10px;
-        height: 10px;
-        background: #0e639c;
-        border-radius: 50%;
-      }
-      .onboarding-label {
-        flex: 1;
-      }
-      .onboarding-label strong {
-        color: #fff;
-        font-weight: 500;
-        display: block;
-        margin-bottom: 2px;
-      }
-      .onboarding-label span {
-        color: #858585;
-        font-size: 11px;
-      }
-      .onboarding-recommended {
-        background: #0e639c;
-        color: #fff;
-        font-size: 9px;
-        padding: 2px 6px;
-        border-radius: 3px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      
-      .onboarding-btn {
-        width: 100%;
-        padding: 12px 20px;
-        background: #0e639c;
-        border: none;
-        color: #fff;
-        font-size: 14px;
-        font-weight: 500;
-        border-radius: 4px;
-        cursor: pointer;
-        font-family: inherit;
-        transition: all 0.15s;
-      }
-      .onboarding-btn:hover { background: #1177bb; }
-      .onboarding-btn:active { transform: scale(0.98); }
-    </style>
-  </head>
-  <body>
-    <!-- Onboarding Modal (first-run) -->
-    <div id="nvim-onboarding" class="hidden">
-      <div class="onboarding-box">
-        <h2>Welcome to nvim-web!</h2>
-        <p>Where should your files be stored?</p>
-        
-        <div class="onboarding-options">
-          <label class="onboarding-option selected" data-backend="local">
-            <input type="radio" name="backend" value="local" checked>
-            <div class="onboarding-radio"></div>
-            <div class="onboarding-label">
-              <strong>Server Filesystem</strong>
-              <span>Files stored on the host machine</span>
-            </div>
-            <span class="onboarding-recommended">Recommended</span>
-          </label>
-          
-          <label class="onboarding-option" data-backend="browser">
-            <input type="radio" name="backend" value="browser">
-            <div class="onboarding-radio"></div>
-            <div class="onboarding-label">
-              <strong>Browser Storage (OPFS)</strong>
-              <span>Files stored locally in browser, persist across sessions</span>
-            </div>
-          </label>
-          
-          <label class="onboarding-option" data-backend="ssh">
-            <input type="radio" name="backend" value="ssh">
-            <div class="onboarding-radio"></div>
-            <div class="onboarding-label">
-              <strong>SSH Remote Server</strong>
-              <span>Edit files on a remote machine via SSH</span>
-            </div>
-          </label>
-        </div>
-        
-        <button class="onboarding-btn" id="onboarding-continue">Continue</button>
-      </div>
-    </div>
-    
-    <div id="nvim-status" class="status-connecting"></div>
-    <div id="nvim-toast"></div>
-    <div id="nvim-dirty">unsaved</div>
-    <textarea id="nvim-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-    <div id="editor-root" tabindex="0">
-      <canvas id="nvim"></canvas>
-    </div>
-    
-    <!-- Status Drawer -->
-    <div id="nvim-drawer" class="collapsed">
-      <!-- Status Bar (always visible) -->
-      <div class="drawer-bar" id="drawer-bar">
-        <span class="drawer-item backend" id="drawer-backend-badge" title="Storage Backend">LOCAL</span>
-        <span class="drawer-item cwd" id="drawer-cwd" title="Working Directory">~</span>
-        <span class="drawer-sep">/</span>
-        <span class="drawer-item file" id="drawer-file" title="Current File">-</span>
-        <span class="drawer-item modified" id="drawer-modified" style="display:none" title="Unsaved Changes">*</span>
-        <span class="drawer-item git" id="drawer-git" title="Git Branch"></span>
-        <span class="drawer-spacer"></span>
-        <span class="drawer-item session" id="drawer-session" title="Session ID">session: -</span>
-        <button class="drawer-toggle" id="drawer-toggle" title="Toggle Panel">&#9650;</button>
-      </div>
-      
-      <!-- Drawer Content (hidden when collapsed) -->
-      <div class="drawer-content" id="drawer-content">
-        <div class="drawer-section">
-          <h3>Quick Actions</h3>
-          <div class="drawer-actions">
-            <button data-cmd=":w\n" title="Save file (:w)">Save</button>
-            <button data-cmd=":q\n" title="Close window (:q)">Close</button>
-            <button data-cmd=":vs\n" title="Vertical split (:vs)">V-Split</button>
-            <button data-cmd=":sp\n" title="Horizontal split (:sp)">H-Split</button>
-            <button data-cmd=":tabnew\n" title="New tab (:tabnew)">New Tab</button>
-            <button data-cmd=":e .\n" title="Open file explorer (:e .)">Files</button>
+    }
+
+    /* Toast Notifications */
+    #nvim-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ff5555;
+      color: #f8f8f2;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    #nvim-toast.show {
+      opacity: 0.95;
+    }
+
+    /* Context Menu */
+    #nvim-context-menu {
+      position: fixed;
+      background: #252526;
+      border: 1px solid #454545;
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      min-width: 160px;
+      z-index: 10001;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    #nvim-context-menu.hidden {
+      display: none;
+    }
+    #nvim-context-menu .menu-item {
+      padding: 8px 16px;
+      color: #ccc;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    #nvim-context-menu .menu-item:hover {
+      background: #094771;
+      color: #fff;
+    }
+    #nvim-context-menu .menu-divider {
+      height: 1px;
+      background: #454545;
+      margin: 4px 0;
+    }
+
+    /* Hidden textarea for IME/mobile input */
+    #nvim-input {
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      border: none;
+      outline: none;
+      resize: none;
+      overflow: hidden;
+    }
+
+    /* Dirty state indicator */
+    #nvim-dirty {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      color: #f1fa8c;
+      font-size: 12px;
+      font-weight: bold;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 9999;
+    }
+
+    #nvim-dirty.show {
+      opacity: 0.9;
+    }
+
+    /* Status Drawer - Glassmorphism style */
+    #nvim-drawer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(30, 30, 30, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+      font-size: 12px;
+      z-index: 1000;
+      transition: height 0.15s ease-out;
+    }
+
+    #nvim-drawer.collapsed {
+      height: 28px;
+    }
+
+    #nvim-drawer.expanded {
+      height: 280px;
+    }
+
+    .drawer-bar {
+      display: flex;
+      align-items: center;
+      height: 28px;
+      padding: 0 12px;
+      gap: 12px;
+      color: #858585;
+      cursor: pointer;
+      user-select: none;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .drawer-bar:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .drawer-item {
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .drawer-item.cwd {
+      color: #9cdcfe;
+    }
+
+    .drawer-item.file {
+      color: #dcdcaa;
+    }
+
+    .drawer-item.git {
+      color: #89d185;
+    }
+
+    .drawer-item.session {
+      color: #569cd6;
+      font-size: 11px;
+    }
+
+    .drawer-item.modified {
+      color: #ce9178;
+      font-weight: bold;
+    }
+
+    .drawer-sep {
+      color: #555;
+    }
+
+    .drawer-spacer {
+      flex: 1;
+    }
+
+    .drawer-toggle {
+      background: none;
+      border: none;
+      color: #858585;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+
+    .drawer-toggle:hover {
+      background: #3c3c3c;
+      color: #fff;
+    }
+
+    #nvim-drawer.expanded .drawer-toggle {
+      transform: rotate(180deg);
+    }
+
+    .drawer-content {
+      display: none;
+      padding: 12px 16px;
+      overflow-y: auto;
+      height: calc(100% - 28px);
+      background: #1e1e1e;
+    }
+
+    #nvim-drawer.expanded .drawer-content {
+      display: block;
+    }
+
+    /* Widget Grid System */
+    .widget-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .widget {
+      background: #2d2d2d;
+      border: 1px solid #3c3c3c;
+      border-radius: 6px;
+      padding: 12px;
+      min-height: 80px;
+    }
+
+    .widget[data-width="2"] { grid-column: span 2; }
+    .widget[data-width="3"] { grid-column: span 3; }
+
+    .widget-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .widget-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #858585;
+      font-weight: 500;
+      margin: 0;
+    }
+
+    .widget-close {
+      background: none;
+      border: none;
+      color: #555;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    .widget-close:hover { color: #ff5555; }
+
+    .widget-body {
+      color: #ccc;
+      font-size: 12px;
+    }
+
+    /* Widget: Actions */
+    .widget-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .widget-actions button {
+      background: #3c3c3c;
+      border: 1px solid #4c4c4c;
+      color: #ccc;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      transition: all 0.1s;
+    }
+    .widget-actions button:hover {
+      background: #505050;
+      border-color: #606060;
+      color: #fff;
+    }
+
+    /* Widget: Clock */
+    .widget-clock {
+      font-size: 24px;
+      font-weight: 300;
+      color: #569cd6;
+      text-align: center;
+      padding: 10px 0;
+    }
+
+    /* Widget: Notes */
+    .widget-notes textarea {
+      width: 100%;
+      height: 60px;
+      background: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      color: #ccc;
+      font-size: 12px;
+      font-family: inherit;
+      padding: 8px;
+      resize: none;
+    }
+    .widget-notes textarea:focus {
+      outline: none;
+      border-color: #0e639c;
+    }
+
+    .drawer-section {
+      margin-bottom: 20px;
+    }
+
+    .drawer-section h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #858585;
+      margin: 0 0 10px 0;
+      font-weight: 500;
+    }
+
+    .drawer-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .drawer-actions button {
+      background: #3c3c3c;
+      border: 1px solid #4c4c4c;
+      color: #ccc;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      transition: all 0.1s;
+    }
+
+    .drawer-actions button:hover {
+      background: #505050;
+      border-color: #606060;
+      color: #fff;
+    }
+
+    .drawer-actions button:active {
+      background: #444;
+      transform: scale(0.98);
+    }
+
+    #drawer-buffers {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    #drawer-buffers li {
+      padding: 6px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+      color: #ccc;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #drawer-buffers li:hover {
+      background: #2a2d2e;
+    }
+
+    #drawer-buffers li.active {
+      background: #37373d;
+      color: #fff;
+    }
+
+    #drawer-buffers .buf-icon {
+      color: #858585;
+      font-size: 11px;
+    }
+
+    #drawer-buffers .buf-modified {
+      color: #ce9178;
+    }
+
+    .drawer-info {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px 16px;
+      font-size: 11px;
+    }
+
+    .drawer-info dt {
+      color: #858585;
+    }
+
+    .drawer-info dd {
+      color: #ccc;
+      margin: 0;
+    }
+
+    /* Backend badge in drawer status bar */
+    .drawer-item.backend {
+      background: #0e639c;
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .drawer-item.backend.browser {
+      background: #6b4c9a;
+    }
+
+    .drawer-item.backend.ssh {
+      background: #b34045;
+    }
+
+    /* SSH Widget Styles */
+    .ssh-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .ssh-form-row {
+      display: flex;
+      gap: 8px;
+    }
+    .ssh-form input, .ssh-form select {
+      background: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 6px 10px;
+      color: #ccc;
+      font-size: 12px;
+      font-family: inherit;
+      flex: 1;
+    }
+    .ssh-form input:focus, .ssh-form select:focus {
+      outline: none;
+      border-color: #0e639c;
+    }
+    .ssh-form input::placeholder {
+      color: #555;
+    }
+    .ssh-form input.ssh-port {
+      width: 60px;
+      flex: none;
+    }
+    .ssh-form button {
+      background: #b34045;
+      border: none;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .ssh-form button:hover {
+      background: #c95056;
+    }
+    .ssh-form button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .ssh-form button.disconnect {
+      background: #3c3c3c;
+      border: 1px solid #4c4c4c;
+    }
+    .ssh-form button.disconnect:hover {
+      background: #505050;
+    }
+    .ssh-status {
+      font-size: 11px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      margin-top: 4px;
+    }
+    .ssh-status.error {
+      background: #5a2020;
+      color: #ff8888;
+    }
+    .ssh-status.success {
+      background: #1e3a20;
+      color: #7ec87e;
+    }
+    .ssh-status.loading {
+      background: #3a3520;
+      color: #d4c97e;
+    }
+    .ssh-history {
+      margin-top: 8px;
+      border-top: 1px solid #3c3c3c;
+      padding-top: 8px;
+    }
+    .ssh-history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      color: #858585;
+    }
+    .ssh-history-item:hover {
+      background: #2a2d2e;
+      color: #ccc;
+    }
+    .ssh-history-item .ssh-history-delete {
+      color: #555;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .ssh-history-item .ssh-history-delete:hover {
+      color: #ff5555;
+    }
+
+    /* Onboarding Modal */
+    #nvim-onboarding {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      backdrop-filter: blur(4px);
+    }
+
+    #nvim-onboarding.hidden {
+      display: none;
+    }
+
+    .onboarding-box {
+      background: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 8px;
+      padding: 32px 40px;
+      max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+    }
+
+    .onboarding-box h2 {
+      margin: 0 0 8px 0;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 500;
+    }
+
+    .onboarding-box p {
+      margin: 0 0 24px 0;
+      color: #858585;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .onboarding-options {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .onboarding-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .onboarding-option:hover {
+      border-color: #0e639c;
+      background: #2a2d2e;
+    }
+
+    .onboarding-option.selected {
+      border-color: #0e639c;
+      background: #0e639c20;
+    }
+
+    .onboarding-option input {
+      display: none;
+    }
+
+    .onboarding-radio {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #858585;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .onboarding-option.selected .onboarding-radio {
+      border-color: #0e639c;
+    }
+
+    .onboarding-option.selected .onboarding-radio::after {
+      content: '';
+      width: 10px;
+      height: 10px;
+      background: #0e639c;
+      border-radius: 50%;
+    }
+
+    .onboarding-label {
+      flex: 1;
+    }
+
+    .onboarding-label strong {
+      color: #fff;
+      font-weight: 500;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .onboarding-label span {
+      color: #858585;
+      font-size: 11px;
+    }
+
+    .onboarding-recommended {
+      background: #0e639c;
+      color: #fff;
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .onboarding-btn {
+      width: 100%;
+      padding: 12px 20px;
+      background: #0e639c;
+      border: none;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+
+    .onboarding-btn:hover {
+      background: #1177bb;
+    }
+
+    .onboarding-btn:active {
+      transform: scale(0.98);
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Onboarding Modal (first-run) -->
+  <div id="nvim-onboarding" class="hidden">
+    <div class="onboarding-box">
+      <h2>Welcome to nvim-web!</h2>
+      <p>Where should your files be stored?</p>
+
+      <div class="onboarding-options">
+        <label class="onboarding-option selected" data-backend="local">
+          <input type="radio" name="backend" value="local" checked>
+          <div class="onboarding-radio"></div>
+          <div class="onboarding-label">
+            <strong>Server Filesystem</strong>
+            <span>Files stored on the host machine</span>
           </div>
-        </div>
-        
-        <div class="drawer-section">
-          <h3>Open Buffers</h3>
-          <ul id="drawer-buffers">
-            <li class="active"><span class="buf-icon">*</span> (no buffers yet)</li>
-          </ul>
-        </div>
-        
-        <div class="drawer-section">
-          <h3>Session Info</h3>
-          <dl class="drawer-info">
-            <dt>Session:</dt>
-            <dd id="drawer-session-id">-</dd>
-            <dt>Backend:</dt>
-            <dd id="drawer-backend">local</dd>
-            <dt>CWD:</dt>
-            <dd id="drawer-cwd-full">~</dd>
-          </dl>
-        </div>
+          <span class="onboarding-recommended">Recommended</span>
+        </label>
+
+        <label class="onboarding-option" data-backend="browser">
+          <input type="radio" name="backend" value="browser">
+          <div class="onboarding-radio"></div>
+          <div class="onboarding-label">
+            <strong>Browser Storage (OPFS)</strong>
+            <span>Files stored locally in browser, persist across sessions</span>
+          </div>
+        </label>
+
+        <label class="onboarding-option" data-backend="ssh">
+          <input type="radio" name="backend" value="ssh">
+          <div class="onboarding-radio"></div>
+          <div class="onboarding-label">
+            <strong>SSH Remote Server</strong>
+            <span>Edit files on a remote machine via SSH</span>
+          </div>
+        </label>
+      </div>
+
+      <button class="onboarding-btn" id="onboarding-continue">Continue</button>
+    </div>
+  </div>
+
+  <div id="nvim-status" class="status-connecting"></div>
+  <div id="nvim-toast"></div>
+  <div id="nvim-context-menu" class="hidden">
+    <div class="menu-item" data-action="copy">Copy</div>
+    <div class="menu-item" data-action="paste">Paste</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" data-action="selectall">Select All</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" data-action="fullscreen">Toggle Fullscreen</div>
+  </div>
+  <div id="nvim-dirty">unsaved</div>
+  <!-- Hidden input for IME/Mobile: absolute positioned to track cursor -->
+  <textarea id="nvim-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+    style="position: absolute; width: 1px; height: 1em; opacity: 0; z-index: 100; overflow: hidden; top: 0; left: 0;"></textarea>
+  <div id="editor-root" tabindex="0">
+    <canvas id="nvim"></canvas>
+  </div>
+
+  <!-- Status Drawer -->
+  <div id="nvim-drawer" class="collapsed">
+    <!-- Status Bar (always visible) -->
+    <div class="drawer-bar" id="drawer-bar">
+      <div id="nvim-status" class="status-connecting" title="Connection Status"></div>
+      <span class="drawer-item backend" id="drawer-backend-badge" title="Storage Backend">LOCAL</span>
+      <span class="drawer-item cwd" id="drawer-cwd" title="Working Directory">~</span>
+      <span class="drawer-sep">/</span>
+      <span class="drawer-item file" id="drawer-file" title="Current File">-</span>
+      <span class="drawer-item modified" id="drawer-modified" style="display:none" title="Unsaved Changes">*</span>
+      <span class="drawer-item git" id="drawer-git" title="Git Branch"></span>
+      <span class="drawer-spacer"></span>
+      <span class="drawer-item session" id="drawer-session" title="Session ID">session: -</span>
+      <button class="drawer-toggle" id="drawer-toggle" title="Toggle Panel">&#9650;</button>
+    </div>
+
+    <!-- Drawer Content (hidden when collapsed) -->
+    <div class="drawer-content" id="drawer-content">
+      <div class="widget-grid" id="widget-grid">
+        <!-- Widgets are rendered here by the widget registry -->
       </div>
     </div>
-    
-    <script type="module">
-      import init from "./pkg/nvim_web_ui.js";
-      init();
-      
-      // Register service worker for PWA
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js')
-          .then(reg => console.log('SW registered:', reg.scope))
-          .catch(err => console.log('SW registration failed:', err));
-      }
-      
-      // === ONBOARDING MODAL ===
-      const onboardingModal = document.getElementById('nvim-onboarding');
-      const onboardingContinue = document.getElementById('onboarding-continue');
-      const onboardingOptions = document.querySelectorAll('.onboarding-option');
-      let selectedBackend = 'local';
-      
-      // Check if first run
-      if (!localStorage.getItem('nvim_onboarded')) {
-        onboardingModal.classList.remove('hidden');
-      }
-      
-      // Handle option selection
-      onboardingOptions.forEach(option => {
-        option.addEventListener('click', () => {
-          onboardingOptions.forEach(o => o.classList.remove('selected'));
-          option.classList.add('selected');
-          selectedBackend = option.dataset.backend;
-          option.querySelector('input').checked = true;
-        });
+  </div>
+
+  <script type="module">
+    import init from "./pkg/nvim_web_ui.js";
+    init();
+
+    // Register service worker for PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('SW registered:', reg.scope))
+        .catch(err => console.log('SW registration failed:', err));
+    }
+
+    // === ONBOARDING MODAL ===
+    const onboardingModal = document.getElementById('nvim-onboarding');
+    const onboardingContinue = document.getElementById('onboarding-continue');
+    const onboardingOptions = document.querySelectorAll('.onboarding-option');
+    let selectedBackend = 'local';
+
+    // Check if first run
+    if (!localStorage.getItem('nvim_onboarded')) {
+      onboardingModal.classList.remove('hidden');
+    }
+
+    // Handle option selection
+    onboardingOptions.forEach(option => {
+      option.addEventListener('click', () => {
+        onboardingOptions.forEach(o => o.classList.remove('selected'));
+        option.classList.add('selected');
+        selectedBackend = option.dataset.backend;
+        option.querySelector('input').checked = true;
       });
-      
-      // Handle continue button
-      onboardingContinue.addEventListener('click', () => {
-        localStorage.setItem('nvim_onboarded', 'true');
-        localStorage.setItem('nvim_default_backend', selectedBackend);
-        onboardingModal.classList.add('hidden');
-        
-        // Update backend badge in drawer
-        const badge = document.getElementById('drawer-backend-badge');
-        badge.textContent = selectedBackend.toUpperCase();
-        badge.className = 'drawer-item backend ' + selectedBackend;
-        
-        // Focus editor
-        document.getElementById('editor-root').focus();
-        
-        console.log('Onboarding complete, backend:', selectedBackend);
-      });
-      
-      // Load saved backend preference
-      const savedBackend = localStorage.getItem('nvim_default_backend') || 'local';
+    });
+
+    // Handle continue button
+    onboardingContinue.addEventListener('click', () => {
+      localStorage.setItem('nvim_onboarded', 'true');
+      localStorage.setItem('nvim_default_backend', selectedBackend);
+      onboardingModal.classList.add('hidden');
+
+      // Update backend badge in drawer
       const badge = document.getElementById('drawer-backend-badge');
-      badge.textContent = savedBackend.toUpperCase();
-      badge.className = 'drawer-item backend ' + savedBackend;
-      
-      // Drawer toggle functionality
-      const drawer = document.getElementById('nvim-drawer');
-      const drawerBar = document.getElementById('drawer-bar');
-      const toggle = document.getElementById('drawer-toggle');
-      
-      function toggleDrawer() {
-        drawer.classList.toggle('collapsed');
-        drawer.classList.toggle('expanded');
-      }
-      
-      toggle.addEventListener('click', (e) => {
-        e.stopPropagation();
+      badge.textContent = selectedBackend.toUpperCase();
+      badge.className = 'drawer-item backend ' + selectedBackend;
+
+      // Focus editor
+      document.getElementById('editor-root').focus();
+
+      console.log('Onboarding complete, backend:', selectedBackend);
+    });
+
+    // Load saved backend preference
+    const savedBackend = localStorage.getItem('nvim_default_backend') || 'local';
+    const badge = document.getElementById('drawer-backend-badge');
+    badge.textContent = savedBackend.toUpperCase();
+    badge.className = 'drawer-item backend ' + savedBackend;
+
+    // Drawer toggle functionality
+    const drawer = document.getElementById('nvim-drawer');
+    const drawerBar = document.getElementById('drawer-bar');
+    const toggle = document.getElementById('drawer-toggle');
+
+    function toggleDrawer() {
+      drawer.classList.toggle('collapsed');
+      drawer.classList.toggle('expanded');
+    }
+
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDrawer();
+    });
+
+    // Click on bar also toggles (except on toggle button)
+    drawerBar.addEventListener('click', (e) => {
+      if (e.target !== toggle) {
         toggleDrawer();
-      });
-      
-      // Click on bar also toggles (except on toggle button)
-      drawerBar.addEventListener('click', (e) => {
-        if (e.target !== toggle) {
-          toggleDrawer();
-        }
-      });
-      
-      // Quick action buttons send commands to Neovim
-      document.querySelectorAll('.drawer-actions button[data-cmd]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const cmd = btn.dataset.cmd;
-          // Send command to Neovim via the exposed WS
-          if (window.__nvim_ws && window.__nvim_ws.readyState === WebSocket.OPEN) {
-            // Focus back to editor after action
-            document.getElementById('editor-root').focus();
-          }
-          // Commands will be sent via the input system (Phase 2)
-          console.log('Drawer action:', cmd);
-        });
-      });
-      
-      // Track dirty state for beforeunload warning
-      let isDirty = false;
-      
-      // beforeunload warning - prevents accidental data loss
-      window.addEventListener('beforeunload', (e) => {
-        if (isDirty) {
-          e.preventDefault();
-          e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-          return e.returnValue;
-        }
-      });
-      
-      // Cmd+W / Ctrl+W intercept - prevent accidental tab close
-      window.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
-          e.preventDefault();
-          // Send :q to Neovim instead of closing browser tab
-          if (window.__nvim_input) {
-            window.__nvim_input(':q\n');
-          }
-          console.log('Intercepted Cmd+W - use :q to close Neovim window');
-        }
-      });
-      
-      // Toast notification helper
-      function showToast(message, duration = 3000) {
-        const toast = document.getElementById('nvim-toast');
-        if (toast) {
-          toast.textContent = message;
-          toast.classList.add('show');
-          setTimeout(() => toast.classList.remove('show'), duration);
-        }
       }
+    });
+
+    // === WIDGET SYSTEM ===
+    window.__widgets = {
+      _registry: {},
+      _layout: JSON.parse(localStorage.getItem('nvim_widget_layout') || '["actions", "session", "clock", "notes"]'),
+      _hidden: JSON.parse(localStorage.getItem('nvim_widget_hidden') || '[]'),
       
-      // Expose drawer update functions for Rust/WASM to call
-      window.__drawer = {
-        setFile: (name) => {
-          document.getElementById('drawer-file').textContent = name || '-';
-          // Update page title with filename
-          document.title = name ? `${name} - Neovim Web` : 'Neovim Web';
-        },
-        setCwd: (cwd) => {
-          // Shorten home directory to ~
-          const shortened = cwd ? cwd.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~') : '~';
-          document.getElementById('drawer-cwd').textContent = shortened;
-          document.getElementById('drawer-cwd-full').textContent = cwd || '~';
-        },
-        setModified: (modified) => {
-          isDirty = modified;  // Track for beforeunload
-          document.getElementById('drawer-modified').style.display = modified ? 'inline' : 'none';
-          // Update title with asterisk when dirty
-          const currentTitle = document.title.replace(/^\* /, '');
-          document.title = modified ? `* ${currentTitle}` : currentTitle;
-        },
-        setGitBranch: (branch) => {
-          const el = document.getElementById('drawer-git');
-          if (branch && branch.trim()) {
-            el.textContent = branch.trim();
-            el.style.display = 'inline';
-          } else {
-            el.style.display = 'none';
+      register(widget) {
+        this._registry[widget.id] = widget;
+        this.render();
+      },
+      
+      hide(id) {
+        if (!this._hidden.includes(id)) {
+          this._hidden.push(id);
+          localStorage.setItem('nvim_widget_hidden', JSON.stringify(this._hidden));
+          this.render();
+        }
+      },
+      
+      show(id) {
+        this._hidden = this._hidden.filter(x => x !== id);
+        localStorage.setItem('nvim_widget_hidden', JSON.stringify(this._hidden));
+        this.render();
+      },
+      
+      setLayout(ids) {
+        this._layout = ids;
+        localStorage.setItem('nvim_widget_layout', JSON.stringify(ids));
+        this.render();
+      },
+      
+      update(id) {
+        const el = document.querySelector(`[data-widget-id="${id}"] .widget-body`);
+        const widget = this._registry[id];
+        if (el && widget) {
+          el.innerHTML = widget.render();
+          if (widget.init) widget.init(el);
+        }
+      },
+      
+      render() {
+        const grid = document.getElementById('widget-grid');
+        if (!grid) return;
+        
+        grid.innerHTML = '';
+        
+        for (const id of this._layout) {
+          if (this._hidden.includes(id)) continue;
+          const widget = this._registry[id];
+          if (!widget) continue;
+          
+          const el = document.createElement('div');
+          el.className = 'widget';
+          el.setAttribute('data-widget-id', id);
+          el.setAttribute('data-width', widget.width || 1);
+          
+          el.innerHTML = `
+            <div class="widget-header">
+              <h3 class="widget-title">${widget.title}</h3>
+              <button class="widget-close" title="Hide widget">&times;</button>
+            </div>
+            <div class="widget-body">${widget.render()}</div>
+          `;
+          
+          el.querySelector('.widget-close').onclick = () => this.hide(id);
+          grid.appendChild(el);
+          
+          if (widget.init) widget.init(el.querySelector('.widget-body'));
+        }
+      },
+      
+      list() {
+        return Object.keys(this._registry);
+      }
+    };
+    
+    // Built-in: Actions widget
+    window.__widgets.register({
+      id: 'actions',
+      title: 'Quick Actions',
+      width: 2,
+      render() {
+        return `<div class="widget-actions">
+          <button data-cmd=":w\n">Save</button>
+          <button data-cmd=":q\n">Close</button>
+          <button data-cmd=":vs\n">V-Split</button>
+          <button data-cmd=":sp\n">H-Split</button>
+          <button data-cmd=":tabnew\n">New Tab</button>
+          <button data-cmd=":e .\n">Files</button>
+        </div>`;
+      },
+      init(el) {
+        el.querySelectorAll('button[data-cmd]').forEach(btn => {
+          btn.onclick = () => {
+            if (window.__nvim_input) {
+              window.__nvim_input(btn.dataset.cmd);
+            }
+            document.getElementById('editor-root').focus();
+          };
+        });
+      }
+    });
+    
+    // Built-in: Session widget
+    window.__widgets.register({
+      id: 'session',
+      title: 'Session Info',
+      width: 1,
+      render() {
+        const sessionId = localStorage.getItem('nvim_session_id') || '-';
+        const backend = localStorage.getItem('nvim_default_backend') || 'local';
+        return `<div style="font-size:11px;color:#858585;">
+          <div><strong style="color:#ccc;">Session:</strong> ${sessionId.slice(0,8)}...</div>
+          <div><strong style="color:#ccc;">Backend:</strong> ${backend}</div>
+        </div>`;
+      }
+    });
+    
+    // Built-in: Clock widget
+    window.__widgets.register({
+      id: 'clock',
+      title: 'Clock',
+      width: 1,
+      render() {
+        return `<div class="widget-clock">${new Date().toLocaleTimeString()}</div>`;
+      },
+      init() {
+        setInterval(() => window.__widgets.update('clock'), 1000);
+      }
+    });
+    
+    // Built-in: Notes widget
+    window.__widgets.register({
+      id: 'notes',
+      title: 'Scratchpad',
+      width: 2,
+      render() {
+        const notes = localStorage.getItem('nvim_widget_notes') || '';
+        return `<div class="widget-notes">
+          <textarea placeholder="Quick notes...">${notes}</textarea>
+        </div>`;
+      },
+      init(el) {
+        const ta = el.querySelector('textarea');
+        ta.oninput = () => localStorage.setItem('nvim_widget_notes', ta.value);
+      }
+    });
+    
+    // Built-in: Pomodoro Timer widget
+    window.__widgets.register({
+      id: 'pomodoro',
+      title: 'Pomodoro',
+      width: 1,
+      _timer: null,
+      _seconds: parseInt(localStorage.getItem('nvim_pomodoro_seconds') || '1500'),
+      _running: false,
+      render() {
+        const mins = Math.floor(this._seconds / 60);
+        const secs = this._seconds % 60;
+        const display = `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+        const btnText = this._running ? 'Pause' : 'Start';
+        return `<div style="text-align:center;">
+          <div class="widget-clock" style="color:${this._seconds < 60 ? '#ff5555' : '#50fa7b'}">${display}</div>
+          <div style="margin-top:8px;display:flex;gap:6px;justify-content:center;">
+            <button class="pomo-toggle" style="padding:4px 12px;background:#3c3c3c;border:1px solid #4c4c4c;color:#ccc;border-radius:4px;cursor:pointer;">${btnText}</button>
+            <button class="pomo-reset" style="padding:4px 8px;background:#3c3c3c;border:1px solid #4c4c4c;color:#858585;border-radius:4px;cursor:pointer;">Reset</button>
+          </div>
+        </div>`;
+      },
+      init(el) {
+        const widget = this;
+        el.querySelector('.pomo-toggle').onclick = () => {
+          widget._running = !widget._running;
+          if (widget._running && !widget._timer) {
+            widget._timer = setInterval(() => {
+              if (widget._seconds > 0) {
+                widget._seconds--;
+                localStorage.setItem('nvim_pomodoro_seconds', widget._seconds);
+              } else {
+                widget._running = false;
+                clearInterval(widget._timer);
+                widget._timer = null;
+                // Play notification sound or show alert
+                if (Notification.permission === 'granted') {
+                  new Notification('Pomodoro Complete!', { body: 'Take a break!' });
+                }
+              }
+              window.__widgets.update('pomodoro');
+            }, 1000);
+          } else if (!widget._running && widget._timer) {
+            clearInterval(widget._timer);
+            widget._timer = null;
           }
-        },
-        setSession: (id, isReconnect = false) => {
-          document.getElementById('drawer-session').textContent = 'session: ' + (id ? id.slice(0, 8) : '-');
-          document.getElementById('drawer-session-id').textContent = id || '-';
-          // Show reconnection toast
-          if (isReconnect && id) {
-            showToast('Reconnected to session ' + id.slice(0, 8), 2000);
-          }
-        },
-        setBackend: (backend) => {
-          const badge = document.getElementById('drawer-backend-badge');
-          const b = (backend || 'local').toLowerCase();
-          badge.textContent = b.toUpperCase();
-          badge.className = 'drawer-item backend ' + b;
-        },
-        setBuffers: (buffers) => {
-          const list = document.getElementById('drawer-buffers');
-          if (!buffers || buffers.length === 0) {
-            list.innerHTML = '<li><span class="buf-icon">-</span> (no buffers)</li>';
-            return;
-          }
-          list.innerHTML = buffers.map(b => 
-            `<li class="${b.active ? 'active' : ''}" data-buf="${b.name}">
+          window.__widgets.update('pomodoro');
+        };
+        el.querySelector('.pomo-reset').onclick = () => {
+          widget._running = false;
+          if (widget._timer) clearInterval(widget._timer);
+          widget._timer = null;
+          widget._seconds = 1500;
+          localStorage.setItem('nvim_pomodoro_seconds', '1500');
+          window.__widgets.update('pomodoro');
+        };
+      }
+    });
+    
+    // Built-in: Shortcuts cheatsheet widget
+    window.__widgets.register({
+      id: 'shortcuts',
+      title: 'Vim Shortcuts',
+      width: 2,
+      render() {
+        return `<div style="font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;color:#858585;">
+          <kbd style="color:#569cd6;">i</kbd><span>Insert mode</span>
+          <kbd style="color:#569cd6;">Esc</kbd><span>Normal mode</span>
+          <kbd style="color:#569cd6;">:w</kbd><span>Save file</span>
+          <kbd style="color:#569cd6;">:q</kbd><span>Quit/close</span>
+          <kbd style="color:#569cd6;">/</kbd><span>Search</span>
+          <kbd style="color:#569cd6;">dd</kbd><span>Delete line</span>
+          <kbd style="color:#569cd6;">yy</kbd><span>Copy line</span>
+          <kbd style="color:#569cd6;">p</kbd><span>Paste</span>
+          <kbd style="color:#569cd6;">u</kbd><span>Undo</span>
+          <kbd style="color:#569cd6;">Ctrl+r</kbd><span>Redo</span>
+        </div>`;
+      }
+    });
+    
+    // Built-in: Git Status widget (uses drawer data)
+    window.__widgets.register({
+      id: 'git',
+      title: 'Git',
+      width: 1,
+      render() {
+        const branch = document.getElementById('drawer-git')?.textContent || '-';
+        const cwd = document.getElementById('drawer-cwd')?.textContent || '~';
+        return `<div style="font-size:11px;color:#858585;">
+          <div style="margin-bottom:4px;"><span style="color:#50fa7b;">Branch:</span> <strong style="color:#ccc;">${branch || 'not a repo'}</strong></div>
+          <div><span style="color:#569cd6;">CWD:</span> ${cwd}</div>
+        </div>`;
+      }
+    });
+    
+    // Built-in: SSH Connection widget
+    window.__widgets.register({
+      id: 'ssh',
+      title: 'SSH Remote',
+      width: 2,
+      _connected: false,
+      _loading: false,
+      _error: null,
+      _currentHost: null,
+      
+      getHistory() {
+        return JSON.parse(localStorage.getItem('nvim_ssh_history') || '[]');
+      },
+      
+      addToHistory(conn) {
+        let history = this.getHistory();
+        // Remove duplicates
+        history = history.filter(h => !(h.host === conn.host && h.user === conn.user && h.port === conn.port));
+        // Add to front
+        history.unshift(conn);
+        // Keep last 5
+        history = history.slice(0, 5);
+        localStorage.setItem('nvim_ssh_history', JSON.stringify(history));
+      },
+      
+      removeFromHistory(index) {
+        let history = this.getHistory();
+        history.splice(index, 1);
+        localStorage.setItem('nvim_ssh_history', JSON.stringify(history));
+        window.__widgets.update('ssh');
+      },
+      
+      render() {
+        const history = this.getHistory();
+        const historyHtml = history.length > 0 ? `
+          <div class="ssh-history">
+            <div style="font-size:10px;color:#555;margin-bottom:4px;">Recent</div>
+            ${history.map((h, i) => `
+              <div class="ssh-history-item" data-index="${i}">
+                <span>${h.user}@${h.host}:${h.port || 22}</span>
+                <span class="ssh-history-delete" data-index="${i}">&times;</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : '';
+        
+        const statusHtml = this._error ? `<div class="ssh-status error">${this._error}</div>` :
+                          this._loading ? `<div class="ssh-status loading">Connecting...</div>` :
+                          this._connected ? `<div class="ssh-status success">Connected to ${this._currentHost}</div>` : '';
+        
+        if (this._connected) {
+          return `<div class="ssh-form">
+            ${statusHtml}
+            <button class="disconnect" data-action="disconnect">Disconnect</button>
+          </div>`;
+        }
+        
+        return `<div class="ssh-form">
+          <div class="ssh-form-row">
+            <input type="text" name="user" placeholder="username" value="">
+            <span style="color:#555;line-height:30px;">@</span>
+            <input type="text" name="host" placeholder="hostname" value="">
+            <span style="color:#555;line-height:30px;">:</span>
+            <input type="number" name="port" class="ssh-port" placeholder="22" value="22">
+          </div>
+          <div class="ssh-form-row">
+            <input type="password" name="password" placeholder="password (optional, uses SSH key if empty)" value="">
+          </div>
+          <div class="ssh-form-row">
+            <button data-action="test">Test Connection</button>
+            <button data-action="connect">Connect</button>
+          </div>
+          ${statusHtml}
+          ${historyHtml}
+        </div>`;
+      },
+      
+      init(el) {
+        const widget = this;
+        
+        // History item click - fill form
+        el.querySelectorAll('.ssh-history-item').forEach(item => {
+          item.onclick = (e) => {
+            if (e.target.classList.contains('ssh-history-delete')) {
+              widget.removeFromHistory(parseInt(e.target.dataset.index));
+              return;
+            }
+            const history = widget.getHistory();
+            const conn = history[parseInt(item.dataset.index)];
+            if (conn) {
+              el.querySelector('input[name="user"]').value = conn.user;
+              el.querySelector('input[name="host"]').value = conn.host;
+              el.querySelector('input[name="port"]').value = conn.port || 22;
+            }
+          };
+        });
+        
+        // Button actions
+        el.querySelectorAll('button[data-action]').forEach(btn => {
+          btn.onclick = async () => {
+            const action = btn.dataset.action;
+            
+            if (action === 'disconnect') {
+              widget._connected = false;
+              widget._currentHost = null;
+              window.__drawer.setBackend('local');
+              window.__widgets.update('ssh');
+              return;
+            }
+            
+            const user = el.querySelector('input[name="user"]')?.value.trim();
+            const host = el.querySelector('input[name="host"]')?.value.trim();
+            const port = parseInt(el.querySelector('input[name="port"]')?.value) || 22;
+            const password = el.querySelector('input[name="password"]')?.value;
+            
+            if (!user || !host) {
+              widget._error = 'Username and hostname are required';
+              window.__widgets.update('ssh');
+              return;
+            }
+            
+            widget._loading = true;
+            widget._error = null;
+            window.__widgets.update('ssh');
+            
+            try {
+              const endpoint = action === 'test' ? '/api/ssh/test' : '/api/ssh/connect';
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ host, port, user, password: password || null })
+              });
+              const data = await response.json();
+              
+              widget._loading = false;
+              
+              if (!response.ok || data.error) {
+                widget._error = data.error || 'Connection failed';
+              } else {
+                widget._error = null;
+                if (action === 'connect') {
+                  widget._connected = true;
+                  widget._currentHost = `${user}@${host}`;
+                  widget.addToHistory({ user, host, port });
+                  window.__drawer.setBackend('ssh');
+                } else {
+                  widget._error = null;
+                  // Show success briefly for test
+                  window.__drawer.showToast('SSH connection successful!', 2000);
+                }
+              }
+            } catch (e) {
+              widget._loading = false;
+              widget._error = 'Network error: ' + e.message;
+            }
+            
+            window.__widgets.update('ssh');
+          };
+        });
+      }
+    });
+    
+    // Update default layout to include new widgets
+    if (!localStorage.getItem('nvim_widget_layout')) {
+      window.__widgets._layout = ['actions', 'ssh', 'git', 'pomodoro', 'notes'];
+    }
+    
+    // Initial render
+    window.__widgets.render();
+    
+    // Request notification permission for Pomodoro
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    // Track dirty state for beforeunload warning
+    let isDirty = false;
+
+    // beforeunload warning - prevents accidental data loss
+    window.addEventListener('beforeunload', (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    });
+
+    // Cmd+W / Ctrl+W intercept - prevent accidental tab close
+    window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
+        e.preventDefault();
+        // Send :q to Neovim instead of closing browser tab
+        if (window.__nvim_input) {
+          window.__nvim_input(':q\n');
+        }
+        console.log('Intercepted Cmd+W - use :q to close Neovim window');
+      }
+    });
+
+    // Toast notification helper
+    function showToast(message, duration = 3000) {
+      const toast = document.getElementById('nvim-toast');
+      if (toast) {
+        toast.textContent = message;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), duration);
+      }
+    }
+
+    // Expose drawer update functions for Rust/WASM to call
+    window.__drawer = {
+      projectName: null,
+
+      setProject: (name) => {
+        window.__drawer.projectName = name;
+        // Initial title update - just the project name
+        document.title = name;
+      },
+
+      setFile: (path) => {
+        // Extract just the filename
+        const name = path ? path.split('/').pop() : '';
+        document.getElementById('drawer-file').textContent = name || '-';
+
+        // Update page title format: [filename] - [project]
+        // If no project, just [filename] or "Neovim"
+        const project = window.__drawer.projectName;
+
+        if (name && project) {
+          document.title = `${name} - ${project}`;
+        } else if (name) {
+          document.title = name;
+        } else if (project) {
+          document.title = project;
+        } else {
+          document.title = 'Neovim';
+        }
+      },
+      setCwd: (cwd) => {
+        // Shorten home directory to ~
+        const shortened = cwd ? cwd.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~') : '~';
+        document.getElementById('drawer-cwd').textContent = shortened;
+        document.getElementById('drawer-cwd-full').textContent = cwd || '~';
+      },
+      setModified: (modified) => {
+        isDirty = modified;  // Track for beforeunload
+        document.getElementById('drawer-modified').style.display = modified ? 'inline' : 'none';
+
+        // Update title with asterisk when dirty
+        let title = document.title;
+        if (title.startsWith('* ')) {
+          title = title.substring(2);
+        }
+        document.title = modified ? `* ${title}` : title;
+      },
+      setGitBranch: (branch) => {
+        const el = document.getElementById('drawer-git');
+        if (branch && branch.trim()) {
+          el.textContent = branch.trim();
+          el.style.display = 'inline';
+        } else {
+          el.style.display = 'none';
+        }
+      },
+      setSession: (id, isReconnect = false) => {
+        document.getElementById('drawer-session').textContent = 'session: ' + (id ? id.slice(0, 8) : '-');
+        document.getElementById('drawer-session-id').textContent = id || '-';
+        // Show reconnection toast
+        if (isReconnect && id) {
+          showToast('Reconnected to session ' + id.slice(0, 8), 2000);
+        }
+      },
+      setBackend: (backend) => {
+        const badge = document.getElementById('drawer-backend-badge');
+        const b = (backend || 'local').toLowerCase();
+        badge.textContent = b.toUpperCase();
+        badge.className = 'drawer-item backend ' + b;
+      },
+      setBuffers: (buffers) => {
+        const list = document.getElementById('drawer-buffers');
+        if (!buffers || buffers.length === 0) {
+          list.innerHTML = '<li><span class="buf-icon">-</span> (no buffers)</li>';
+          return;
+        }
+        list.innerHTML = buffers.map(b =>
+          `<li class="${b.active ? 'active' : ''}" data-buf="${b.name}">
               <span class="buf-icon">${b.modified ? '*' : ' '}</span>
               ${b.name || '[No Name]'}
             </li>`
-          ).join('');
-        },
-        showToast: showToast
-      };
-      
-      // Expose input function for Cmd+W intercept
-      window.__nvim_input = null;  // Will be set by WASM
-    </script>
-  </body>
-</html>
+        ).join('');
+      },
+      showToast: showToast
+    };
 
+    // Expose input function for Cmd+W intercept
+    window.__nvim_input = null;  // Will be set by WASM
+
+    // Context menu handlers
+    (function setupContextMenu() {
+      const menu = document.getElementById('nvim-context-menu');
+      if (!menu) return;
+
+      // Handle menu item clicks
+      menu.addEventListener('click', async function(e) {
+        const item = e.target.closest('.menu-item');
+        if (!item) return;
+
+        const action = item.dataset.action;
+        hideContextMenu();
+
+        switch (action) {
+          case 'copy':
+            if (window.__nvim_input) {
+              window.__nvim_input('"+y');
+            }
+            break;
+          case 'paste':
+            // Read clipboard and send to Neovim
+            try {
+              const text = await navigator.clipboard.readText();
+              if (text && window.__nvim_input) {
+                for (const char of text) {
+                  if (char === '\n') {
+                    window.__nvim_input('<CR>');
+                  } else if (char === '<') {
+                    window.__nvim_input('<lt>');
+                  } else if (char === '\t') {
+                    window.__nvim_input('<Tab>');
+                  } else {
+                    window.__nvim_input(char);
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('Clipboard read failed:', err);
+            }
+            break;
+          case 'selectall':
+            if (window.__nvim_input) {
+              window.__nvim_input('<Esc>ggVG');
+            }
+            break;
+          case 'fullscreen':
+            if (document.fullscreenElement) {
+              document.exitFullscreen();
+            } else {
+              document.documentElement.requestFullscreen();
+            }
+            break;
+        }
+      });
+
+      // Hide menu on click outside
+      document.addEventListener('click', function(e) {
+        if (!menu.contains(e.target)) {
+          hideContextMenu();
+        }
+      });
+
+      // Hide menu on Escape
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          hideContextMenu();
+        }
+      });
+
+      function hideContextMenu() {
+        menu.setAttribute('class', 'hidden');
+      }
+    })();
+  </script>
+</body>
+
+</html>

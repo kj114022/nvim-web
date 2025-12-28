@@ -47,6 +47,35 @@ function M.setup()
   vim.g.netrw_banner = 0      -- Hide banner
   vim.g.netrw_liststyle = 3   -- Tree style
   vim.g.netrw_winsize = 25    -- 25% width for splits
+
+  -- Configure clipboard provider
+  -- This delegates clipboard operations to the host via RPC
+  _G.NvimWebClipboardCopy = function(lines, regtype)
+    vim.rpcnotify(0, 'clipboard_write', lines, regtype)
+  end
+
+  _G.NvimWebClipboardPaste = function()
+    -- This sends a request to host, which asks browser, and returns result
+    local ok, result = pcall(vim.rpcrequest, 0, 'clipboard_read', '')
+    if ok then
+      return result
+    else
+      return { '', 'v' }
+    end
+  end
+
+  vim.g.clipboard = {
+    name = 'nvim-web',
+    copy = {
+      ['+'] = 'v:lua.NvimWebClipboardCopy',
+      ['*'] = 'v:lua.NvimWebClipboardCopy',
+    },
+    paste = {
+      ['+'] = 'v:lua.NvimWebClipboardPaste',
+      ['*'] = 'v:lua.NvimWebClipboardPaste',
+    },
+    cache_enabled = 1,
+  }
 end
 
 return M

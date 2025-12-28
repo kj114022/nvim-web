@@ -5,11 +5,12 @@
 //!
 //! Projects can have an optional `.nvim-web/config.toml` for customization.
 
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
+
+use serde::Deserialize;
 
 /// Project configuration from `.nvim-web/config.toml`
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -48,18 +49,16 @@ impl ProjectConfig {
         let config_path = project_path.join(".nvim-web").join("config.toml");
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
-                Ok(content) => {
-                    match toml::from_str(&content) {
-                        Ok(config) => return config,
-                        Err(e) => eprintln!("  [warn] Failed to parse .nvim-web/config.toml: {}", e),
-                    }
-                }
+                Ok(content) => match toml::from_str(&content) {
+                    Ok(config) => return config,
+                    Err(e) => eprintln!("  [warn] Failed to parse .nvim-web/config.toml: {}", e),
+                },
                 Err(e) => eprintln!("  [warn] Failed to read .nvim-web/config.toml: {}", e),
             }
         }
         Self::default()
     }
-    
+
     /// Get the display name (from config or directory name)
     pub fn display_name(&self, project_path: &Path) -> String {
         self.project.name.clone().unwrap_or_else(|| {
@@ -70,7 +69,7 @@ impl ProjectConfig {
                 .to_string()
         })
     }
-    
+
     /// Get the working directory (resolved to absolute path)
     pub fn resolved_cwd(&self, project_path: &Path) -> PathBuf {
         match &self.editor.cwd {
@@ -96,19 +95,19 @@ pub struct OpenToken {
 impl OpenToken {
     /// Token TTL (5 minutes)
     const TTL: Duration = Duration::from_secs(300);
-    
+
     /// Check if token is expired
     pub fn is_expired(&self) -> bool {
         self.created_at.elapsed() > Self::TTL
     }
-    
+
     /// Check if token is valid (not expired, not claimed)
     pub fn is_valid(&self) -> bool {
         !self.is_expired() && !self.claimed
     }
 }
 
-/// Global token storage
+// Global token storage
 lazy_static::lazy_static! {
     static ref OPEN_TOKENS: RwLock<HashMap<String, OpenToken>> = RwLock::new(HashMap::new());
 }
@@ -133,14 +132,14 @@ pub fn store_token(path: PathBuf, config: ProjectConfig) -> String {
         created_at: Instant::now(),
         claimed: false,
     };
-    
+
     // Clean up expired tokens first
     cleanup_expired_tokens();
-    
+
     if let Ok(mut tokens) = OPEN_TOKENS.write() {
         tokens.insert(token.clone(), open_token);
     }
-    
+
     token
 }
 
@@ -183,7 +182,7 @@ fn cleanup_expired_tokens() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_generate_token() {
         let t1 = generate_token();
@@ -191,18 +190,18 @@ mod tests {
         assert!(!t1.is_empty());
         assert_ne!(t1, t2); // Should be unique
     }
-    
+
     #[test]
     fn test_store_and_claim_token() {
         let path = PathBuf::from("/test/project");
         let config = ProjectConfig::default();
-        
+
         let token = store_token(path.clone(), config);
-        
+
         // First claim should work
         let result = claim_token(&token);
         assert!(result.is_some());
-        
+
         // Second claim should fail (single-use)
         let result2 = claim_token(&token);
         assert!(result2.is_none());

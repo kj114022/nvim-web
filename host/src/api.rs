@@ -4,241 +4,259 @@
 
 use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{delete, get, post},
+    Json, Router,
+};
+use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::session::{AsyncSessionManager, SessionInfo};
 
-/// Simple HTTP response builder
-fn http_response(status: u16, status_text: &str, content_type: &str, body: &str) -> String {
-    format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
-        status, status_text, content_type, body.len(), body
-    )
+// Shared state
+#[derive(Clone)]
+pub struct AppState {
+    pub session_manager: Arc<RwLock<AsyncSessionManager>>,
 }
 
-fn json_response(body: &str) -> String {
-    http_response(200, "OK", "application/json", body)
+// SSH connection request
+#[derive(Deserialize)]
+pub struct SshConnectRequest {
+    pub host: String,
+    pub port: Option<u16>,
+    pub user: String,
+    pub password: Option<String>,
 }
 
-fn not_found() -> String {
-    http_response(404, "Not Found", "text/plain", "Not Found")
+// Routes
+pub fn api_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health_check))
+        .route("/sessions", get(list_sessions).post(create_session))
+        .route("/sessions/count", get(session_count))
+        .route("/sessions/:id", delete(delete_session))
+        .route("/open", post(open_project))
+        .route("/claim/:token", get(claim_token))
+        .route("/token/:token", get(get_token_info))
+        .route("/ssh/test", post(test_ssh_connection))
+        .route("/ssh/connect", post(connect_ssh))
+        .route("/ssh/disconnect", post(disconnect_ssh))
+        .with_state(state)
 }
 
-// Reserved for future use
-#[allow(dead_code)]
-fn method_not_allowed() -> String {
-    http_response(
-        405,
-        "Method Not Allowed",
-        "text/plain",
-        "Method Not Allowed",
-    )
+// Handlers
+
+async fn health_check() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "status": "ok", "version": "0.1.0" }))
 }
 
-/// Parse HTTP request and extract method and path
-fn parse_request(request: &str) -> Option<(&str, &str)> {
-    let first_line = request.lines().next()?;
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    if parts.len() >= 2 {
-        Some((parts[0], parts[1]))
+async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mgr = state.session_manager.read().await;
+    let sessions: Vec<SessionInfo> = mgr.list_sessions();
+    // Use serde_json::to_value to serialize the list
+    Json(serde_json::json!({ "sessions": sessions }))
+}
+
+async fn session_count(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mgr = state.session_manager.read().await;
+    Json(serde_json::json!({ "count": mgr.session_count() }))
+}
+
+async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
+    let mut mgr = state.session_manager.write().await;
+    match mgr.create_session().await {
+        Ok(id) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "id": id, "created": true })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn delete_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let mut mgr = state.session_manager.write().await;
+    if mgr.remove_session(&id).is_some() {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "id": id, "deleted": true })),
+        )
     } else {
-        None
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "session not found" })),
+        )
     }
 }
 
-/// Handle REST API requests
-async fn handle_request(
-    request: &str,
-    session_manager: Arc<RwLock<AsyncSessionManager>>,
-) -> String {
-    let (method, path) = match parse_request(request) {
-        Some((m, p)) => (m, p),
-        None => return http_response(400, "Bad Request", "text/plain", "Bad Request"),
-    };
+#[derive(Deserialize)]
+struct OpenRequest {
+    path: String,
+}
 
-    match (method, path) {
-        // Health check
-        ("GET", "/api/health") => {
-            json_response(r#"{"status":"ok","version":"0.1.0"}"#)
+async fn open_project(
+    State(_state): State<AppState>,
+    Json(payload): Json<OpenRequest>,
+) -> impl IntoResponse {
+    let path_str = payload.path;
+    if path_str.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "path is required" })),
+        );
+    }
+
+    let abs_path = std::path::PathBuf::from(path_str);
+    // Don't enforce existence strictly if we want to allow creating new projects,
+    // but for now let's keep the check for safety or auto-create?
+    // Existing logic checked existence.
+    if !abs_path.exists() {
+        // We could create it?
+        // For verify step: mkdir was done.
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "path does not exist" })),
+        );
+    }
+
+    let abs_path = abs_path.canonicalize().unwrap_or(abs_path);
+    let config = crate::project::ProjectConfig::load(&abs_path);
+    let name = config.display_name(&abs_path);
+    let token = crate::project::store_token(abs_path.clone(), config);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "token": token,
+            "name": name,
+            "path": abs_path.display().to_string(),
+            "url": format!("http://localhost:8080/?open={}", token)
+        })),
+    )
+}
+
+async fn claim_token(Path(token): Path<String>) -> impl IntoResponse {
+    match crate::project::claim_token(&token) {
+        Some((path, config)) => {
+            let name = config.display_name(&path);
+            let cwd = config.resolved_cwd(&path);
+            let init_file = config.editor.init_file.clone().unwrap_or_default();
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "path": path.display().to_string(),
+                    "name": name,
+                    "cwd": cwd.display().to_string(),
+                    "init_file": init_file
+                })),
+            )
         }
-
-        // List sessions
-        ("GET", "/api/sessions") => {
-            let mgr = session_manager.read().await;
-            let sessions: Vec<SessionInfo> = mgr.list_sessions();
-            let json = format!(
-                r#"{{"sessions":[{}]}}"#,
-                sessions.iter()
-                    .map(|s| format!(
-                        r#"{{"id":"{}","age_secs":{},"connected":{}}}"#,
-                        s.id, s.age_secs, s.connected
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            json_response(&json)
-        }
-
-        // Get session count
-        ("GET", "/api/sessions/count") => {
-            let mgr = session_manager.read().await;
-            json_response(&format!(r#"{{"count":{}}}"#, mgr.session_count()))
-        }
-
-        // Create new session
-        ("POST", "/api/sessions") => {
-            let mut mgr = session_manager.write().await;
-            match mgr.create_session().await {
-                Ok(id) => json_response(&format!(r#"{{"id":"{}","created":true}}"#, id)),
-                Err(e) => http_response(500, "Internal Server Error", "application/json",
-                    &format!(r#"{{"error":"{}"}}"#, e)),
-            }
-        }
-
-        // Delete session
-        ("DELETE", path) if path.starts_with("/api/sessions/") => {
-            let id = &path["/api/sessions/".len()..];
-            let mut mgr = session_manager.write().await;
-            if mgr.remove_session(id).is_some() {
-                json_response(&format!(r#"{{"id":"{}","deleted":true}}"#, id))
-            } else {
-                http_response(
-                    404,
-                    "Not Found",
-                    "application/json",
-                    r#"{"error":"session not found"}"#,
-                )
-            }
-        }
-
-        // Open project (magic link) - generate token
-        // POST /api/open with body: {"path":"/abs/path"}
-        ("POST", "/api/open") => {
-            // Parse JSON body
-            let body_start = request.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
-            let body = &request[body_start..];
-            
-            // Simple JSON parsing for path
-            let path = body
-                .split('"')
-                .enumerate()
-                .find(|(i, s)| *i % 4 == 1 && *s == "path")
-                .and_then(|_| body.split('"').nth(3))
-                .unwrap_or("");
-            
-            if path.is_empty() {
-                return http_response(400, "Bad Request", "application/json", 
-                    r#"{"error":"path is required"}"#);
-            }
-            
-            let abs_path = std::path::PathBuf::from(path);
-            if !abs_path.exists() {
-                return http_response(404, "Not Found", "application/json",
-                    r#"{"error":"path does not exist"}"#);
-            }
-            
-            let abs_path = abs_path.canonicalize().unwrap_or(abs_path);
-            let config = crate::project::ProjectConfig::load(&abs_path);
-            let name = config.display_name(&abs_path);
-            let token = crate::project::store_token(abs_path.clone(), config);
-            
-            json_response(&format!(
-                r#"{{"token":"{}","name":"{}","path":"{}","url":"http://localhost:8080/?open={}"}}"#,
-                token, name, abs_path.display(), token
-            ))
-        }
-
-        // Claim token - exchange for session info
-        ("GET", path) if path.starts_with("/api/claim/") => {
-            let token = &path["/api/claim/".len()..];
-            
-            match crate::project::claim_token(token) {
-                Some((path, config)) => {
-                    let name = config.display_name(&path);
-                    let cwd = config.resolved_cwd(&path);
-                    let init_file = config.editor.init_file.clone().unwrap_or_default();
-                    
-                    json_response(&format!(
-                        r#"{{"path":"{}","name":"{}","cwd":"{}","init_file":"{}"}}"#,
-                        path.display(), name, cwd.display(), init_file
-                    ))
-                }
-                None => http_response(404, "Not Found", "application/json",
-                    r#"{"error":"token invalid or expired"}"#),
-            }
-        }
-
-        // Get token info (without claiming)
-        ("GET", path) if path.starts_with("/api/token/") => {
-            let token = &path["/api/token/".len()..];
-            
-            match crate::project::get_token_info(token) {
-                Some((path, config, claimed)) => {
-                    let name = config.display_name(&path);
-                    json_response(&format!(
-                        r#"{{"path":"{}","name":"{}","claimed":{}}}"#,
-                        path.display(), name, claimed
-                    ))
-                }
-                None => http_response(404, "Not Found", "application/json",
-                    r#"{"error":"token not found"}"#),
-            }
-        }
-
-        // CORS preflight
-        ("OPTIONS", _) => {
-            "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n".to_string()
-        }
-
-        _ => not_found(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "token invalid or expired" })),
+        ),
     }
 }
 
-/// Start REST API server
+async fn get_token_info(Path(token): Path<String>) -> impl IntoResponse {
+    match crate::project::get_token_info(&token) {
+        Some((path, config, claimed)) => {
+            let name = config.display_name(&path);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "path": path.display().to_string(),
+                    "name": name,
+                    "claimed": claimed
+                })),
+            )
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "token not found" })),
+        ),
+    }
+}
+
+async fn test_ssh_connection(Json(payload): Json<SshConnectRequest>) -> impl IntoResponse {
+    let uri = format!(
+        "vfs://ssh/{}@{}:{}/",
+        payload.user,
+        payload.host,
+        payload.port.unwrap_or(22)
+    );
+
+    use crate::vfs::SshFsBackend;
+
+    match SshFsBackend::test_connection(&uri, payload.password.as_deref()) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "success": true })),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn connect_ssh(
+    State(state): State<AppState>,
+    Json(payload): Json<SshConnectRequest>,
+) -> impl IntoResponse {
+    let uri = format!(
+        "vfs://ssh/{}@{}:{}/",
+        payload.user,
+        payload.host,
+        payload.port.unwrap_or(22)
+    );
+
+    use crate::vfs::SshFsBackend;
+
+    match SshFsBackend::connect_with_password(&uri, payload.password.as_deref()) {
+        Ok(_backend) => {
+            // Store the active SSH connection in session manager
+            let mut mgr = state.session_manager.write().await;
+            mgr.set_active_ssh(Some(uri.clone()));
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "uri": uri
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn disconnect_ssh(State(state): State<AppState>) -> impl IntoResponse {
+    let mut mgr = state.session_manager.write().await;
+    mgr.set_active_ssh(None);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "success": true })),
+    )
+}
+
+// Deprecated entry point kept for signature compatibility if needed, but unused
 pub async fn serve_api(
-    addr: &str,
-    session_manager: Arc<RwLock<AsyncSessionManager>>,
+    _addr: &str,
+    _session_manager: Arc<RwLock<AsyncSessionManager>>,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    eprintln!("API: REST server listening on {}", addr);
-
-    loop {
-        let (mut socket, _) = listener.accept().await?;
-        let mgr = session_manager.clone();
-
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; 4096];
-            match socket.read(&mut buf).await {
-                Ok(n) if n > 0 => {
-                    let request = String::from_utf8_lossy(&buf[..n]);
-                    let response = handle_request(&request, mgr).await;
-                    let _ = socket.write_all(response.as_bytes()).await;
-                }
-                _ => {}
-            }
-        });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_request() {
-        let req = "GET /api/health HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        let (method, path) = parse_request(req).unwrap();
-        assert_eq!(method, "GET");
-        assert_eq!(path, "/api/health");
-    }
-
-    #[test]
-    fn test_json_response() {
-        let resp = json_response(r#"{"ok":true}"#);
-        assert!(resp.contains("HTTP/1.1 200 OK"));
-        assert!(resp.contains("application/json"));
-        assert!(resp.contains(r#"{"ok":true}"#));
-    }
+    Ok(())
 }

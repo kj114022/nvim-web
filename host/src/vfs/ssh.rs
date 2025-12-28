@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -9,17 +11,30 @@ use ssh2::{Session, Sftp};
 
 use super::{FileStat, VfsBackend};
 
+/// Connection pool entry with last-used timestamp
+struct PoolEntry {
+    backend: Arc<SshFsBackend>,
+    last_used: Instant,
+}
+
+// SSH connection pool: key = "user@host:port"
+lazy_static::lazy_static! {
+    static ref SSH_POOL: RwLock<HashMap<String, PoolEntry>> = RwLock::new(HashMap::new());
+}
+
+/// Connection pool TTL (5 minutes idle)
+const POOL_TTL: Duration = Duration::from_secs(300);
+
 /// SSH filesystem backend using SFTP
 ///
 /// Connects to remote servers via SSH and provides file operations over SFTP.
-/// Uses tokio::task::spawn_blocking for blocking I/O operations.
+/// Connections are pooled and reused for performance.
 ///
 /// URI format: vfs://ssh/<user>@<host>:<port>/<absolute-path>
 /// Example: vfs://ssh/alice@server:22/home/alice/main.rs
-///
-/// Note: ssh2 Session is not Send, so we wrap in Mutex and use spawn_blocking
 pub struct SshFsBackend {
     inner: Mutex<SshFsInner>,
+    pool_key: String,
 }
 
 struct SshFsInner {
@@ -32,29 +47,85 @@ unsafe impl Send for SshFsBackend {}
 unsafe impl Sync for SshFsBackend {}
 
 /// Parsed SSH connection info
+#[derive(Clone)]
 struct ParsedSsh {
     user: String,
     host: String,
     port: u16,
+    password: Option<String>,
 }
 
 impl SshFsBackend {
-    /// Connect to SSH server and initialize SFTP
+    /// Get a pooled connection or create a new one
     ///
-    /// URI format: vfs://ssh/<user>@<host>:<port>/<path>
-    /// Port defaults to 22 if not specified
-    pub fn connect(uri: &str) -> Result<Self> {
+    /// Connections are cached by "user@host:port" and reused for 5 minutes.
+    pub fn get_or_connect(uri: &str) -> Result<Arc<Self>> {
         let parsed = Self::parse_ssh_uri(uri)?;
+        let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
 
+        // Try to get from pool
+        {
+            let pool = SSH_POOL
+                .read()
+                .map_err(|_| anyhow::anyhow!("SSH pool lock poisoned"))?;
+            if let Some(entry) = pool.get(&pool_key) {
+                if entry.last_used.elapsed() < POOL_TTL {
+                    eprintln!("  [ssh] Reusing pooled connection to {}", pool_key);
+                    return Ok(entry.backend.clone());
+                }
+            }
+        }
+
+        // Create new connection
+        eprintln!("  [ssh] Creating new connection to {}", pool_key);
+        let backend = Arc::new(Self::connect_new(&parsed)?);
+
+        // Store in pool
+        {
+            let mut pool = SSH_POOL
+                .write()
+                .map_err(|_| anyhow::anyhow!("SSH pool lock poisoned"))?;
+
+            // Cleanup expired entries
+            pool.retain(|_, entry| entry.last_used.elapsed() < POOL_TTL);
+
+            pool.insert(
+                pool_key.clone(),
+                PoolEntry {
+                    backend: backend.clone(),
+                    last_used: Instant::now(),
+                },
+            );
+        }
+
+        Ok(backend)
+    }
+
+    /// Touch connection (update last-used timestamp)
+    pub fn touch(&self) {
+        if let Ok(mut pool) = SSH_POOL.write() {
+            if let Some(entry) = pool.get_mut(&self.pool_key) {
+                entry.last_used = Instant::now();
+            }
+        }
+    }
+
+    /// Create a new SSH connection (internal)
+    fn connect_new(parsed: &ParsedSsh) -> Result<Self> {
+        let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
         let addr = format!("{}:{}", parsed.host, parsed.port);
+
         let tcp =
             TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {}", addr))?;
+
+        // Set TCP keepalive
+        let _ = tcp.set_read_timeout(Some(Duration::from_secs(30)));
 
         let mut session = Session::new().context("Failed to create SSH session")?;
         session.set_tcp_stream(tcp);
         session.handshake().context("SSH handshake failed")?;
 
-        Self::authenticate(&session, &parsed)?;
+        Self::authenticate(&session, parsed)?;
 
         let sftp = session.sftp().context("Failed to initialize SFTP")?;
 
@@ -63,7 +134,15 @@ impl SshFsBackend {
                 _session: session,
                 sftp,
             }),
+            pool_key,
         })
+    }
+
+    /// Legacy connect method (creates unpooled connection)
+    /// Prefer get_or_connect() for pooled connections
+    pub fn connect(uri: &str) -> Result<Self> {
+        let parsed = Self::parse_ssh_uri(uri)?;
+        Self::connect_new(&parsed)
     }
 
     /// Parse SSH URI into components
@@ -93,27 +172,111 @@ impl SshFsBackend {
             (host_port.to_string(), 22)
         };
 
-        Ok(ParsedSsh { user, host, port })
+        Ok(ParsedSsh {
+            user,
+            host,
+            port,
+            password: None,
+        })
+    }
+
+    /// Test SSH connection without storing it
+    pub fn test_connection(uri: &str, password: Option<&str>) -> Result<()> {
+        let mut parsed = Self::parse_ssh_uri(uri)?;
+        parsed.password = password.map(|s| s.to_string());
+        let _backend = Self::connect_new_with_password(&parsed)?;
+        Ok(())
+    }
+
+    /// Connect with optional password and return pooled backend
+    pub fn connect_with_password(uri: &str, password: Option<&str>) -> Result<Arc<Self>> {
+        let mut parsed = Self::parse_ssh_uri(uri)?;
+        parsed.password = password.map(|s| s.to_string());
+        let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
+
+        // Create new connection with password
+        let backend = Arc::new(Self::connect_new_with_password(&parsed)?);
+
+        // Store in pool
+        {
+            let mut pool = SSH_POOL
+                .write()
+                .map_err(|_| anyhow::anyhow!("SSH pool lock poisoned"))?;
+            pool.retain(|_, entry| entry.last_used.elapsed() < POOL_TTL);
+            pool.insert(
+                pool_key,
+                PoolEntry {
+                    backend: backend.clone(),
+                    last_used: Instant::now(),
+                },
+            );
+        }
+
+        Ok(backend)
+    }
+
+    /// Create connection with password support
+    fn connect_new_with_password(parsed: &ParsedSsh) -> Result<Self> {
+        let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
+        let addr = format!("{}:{}", parsed.host, parsed.port);
+
+        let tcp =
+            TcpStream::connect(&addr).with_context(|| format!("Failed to connect to {}", addr))?;
+        let _ = tcp.set_read_timeout(Some(Duration::from_secs(30)));
+
+        let mut session = Session::new().context("Failed to create SSH session")?;
+        session.set_tcp_stream(tcp);
+        session.handshake().context("SSH handshake failed")?;
+
+        Self::authenticate_with_password(&session, parsed)?;
+
+        let sftp = session.sftp().context("Failed to initialize SFTP")?;
+
+        Ok(Self {
+            inner: Mutex::new(SshFsInner {
+                _session: session,
+                sftp,
+            }),
+            pool_key,
+        })
     }
 
     /// Authenticate using SSH agent or default key
     fn authenticate(session: &Session, parsed: &ParsedSsh) -> Result<()> {
+        Self::authenticate_with_password(session, parsed)
+    }
+
+    /// Authenticate with password support
+    fn authenticate_with_password(session: &Session, parsed: &ParsedSsh) -> Result<()> {
+        // Try password first if provided
+        if let Some(ref password) = parsed.password {
+            if session.userauth_password(&parsed.user, password).is_ok() {
+                eprintln!("  [ssh] Authenticated with password");
+                return Ok(());
+            }
+        }
+
+        // Try SSH agent
         if session.userauth_agent(&parsed.user).is_ok() {
+            eprintln!("  [ssh] Authenticated via SSH agent");
             return Ok(());
         }
 
-        let key_path = dirs::home_dir()
-            .context("Could not determine home directory")?
-            .join(".ssh/id_rsa");
-
-        if key_path.exists() {
-            session
-                .userauth_pubkey_file(&parsed.user, None, &key_path, None)
-                .context("SSH key authentication failed")?;
-            return Ok(());
+        // Try default key files
+        let home = dirs::home_dir().context("Could not determine home directory")?;
+        for key_name in ["id_rsa", "id_ed25519", "id_ecdsa"] {
+            let key_path = home.join(".ssh").join(key_name);
+            if key_path.exists()
+                && session
+                    .userauth_pubkey_file(&parsed.user, None, &key_path, None)
+                    .is_ok()
+            {
+                eprintln!("  [ssh] Authenticated with key: {}", key_name);
+                return Ok(());
+            }
         }
 
-        bail!("SSH authentication failed: no agent and no ~/.ssh/id_rsa")
+        bail!("SSH authentication failed: no valid credentials")
     }
 }
 
