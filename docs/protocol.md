@@ -1,22 +1,26 @@
 # nvim-web Protocol
 
-This document defines the WebSocket protocol used between the nvim-web host (native Neovim process) and the browser UI.
+## Design Philosophy
 
-The protocol transports:
-- Neovim redraw events
-- UI input events
-- RPC request/response messages
-- VFS request/response messages
+This protocol is deliberately simple. It does not reimplement Neovim semantics—
+it transports them faithfully.
 
-This protocol is:
-- Transported over a single WebSocket connection
-- Encoded using MessagePack
-- Request/response oriented where applicable
+**Transports:**
+- Neovim redraw events (UI state)
+- User input events (keys, mouse, resize)
+- RPC request/response (synchronous calls)
+- VFS request/response (file operations)
 
-This protocol does not:
-- Reimplement Neovim semantics
-- Define editor behavior
-- Guarantee backward compatibility across major versions
+**Properties:**
+- Single WebSocket connection
+- MessagePack encoding
+- Request/response where applicable
+- Fire-and-forget for input
+
+**Non-Goals:**
+- Reimplement Neovim editor behavior
+- Public API stability (internal protocol)
+- Third-party client support
 
 ## Transport
 

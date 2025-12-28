@@ -1,138 +1,121 @@
-# Testing Strategy
+# Testing Philosophy
 
-## Overview
+> "Random testing plays as important a role as formal verification in the future of software engineering."
+> — Alperen Keles, "Test, don't (just) verify"
 
-The nvim-web project uses a multi-layered testing approach to ensure correctness across different storage backends while maintaining architectural integrity.
+## Core Principle: Test + Verify
+
+nvim-web embraces a **dual strategy**:
+
+1. **Verification**: Type-safe contracts via Rust's type system and trait bounds
+2. **Testing**: Random/property-based testing to catch what verification misses
+
+Neither is sufficient alone. Proofs guarantee invariants; tests reveal real-world failures.
+
+## Verification-Guided Development (VGD)
+
+We apply VGD principles where practical:
+
+| Layer | Verified Reference | Production Code | Differential Test |
+|-------|-------------------|-----------------|-------------------|
+| VFS   | `VfsBackend` trait | `LocalFs`, `BrowserFs`, `SshFs` | Backend swappability tests |
+| Protocol | `protocol.md` spec | `ws.rs` message handling | Roundtrip encoding tests |
+| Grid | Cell invariants | `GridManager` | Render consistency checks |
+
+The verified reference (trait definition + spec) is simple and provably correct.
+The production code is complex and fast.
+Differential testing bridges them.
+
+---
 
 ## Test Categories
 
 ### Unit Tests
-- **Location**: `host/tests/vfs_localfs_unit.rs`
-- **Scope**: LocalFs backend operations in isolation
-- **Count**: 9 tests
-- **Coverage**: File I/O, paths, sandboxing
+
+| Location | Scope | Count |
+|----------|-------|-------|
+| `host/tests/vfs_localfs_unit.rs` | LocalFs operations | 9 |
+
+Focus: File I/O, path handling, sandbox escape prevention.
 
 ### Integration Tests
-- **Location**: `host/tests/vfs_integration.rs`
-- **Scope**: VfsManager with real backends
-- **Count**: 7 tests
-- **Coverage**: Backend registration, path parsing, lifecycle
 
-### Backend Swappability Tests
-- **Location**: `host/tests/vfs_backend_swappability.rs`
-- **Scope**: Identical test logic against multiple backends
-- **Count**: 10 tests (5 tests × 2 backends)
-- **Backends**: LocalFs, BrowserFs (mocked WS peer)
-- **Purpose**: Prove VfsBackend trait abstraction
+| Location | Scope | Count |
+|----------|-------|-------|
+| `host/tests/vfs_integration.rs` | VfsManager lifecycle | 7 |
+
+Focus: Backend registration, URI parsing, error propagation.
+
+### Backend Swappability (Differential)
+
+| Location | Scope | Count |
+|----------|-------|-------|
+| `host/tests/vfs_backend_swappability.rs` | Trait conformance | 10 |
+
+**This is our VGD implementation.** The same test logic runs against multiple backends:
+- `LocalFs` (real filesystem)
+- `BrowserFs` (mocked WebSocket peer)
+
+If both pass with identical assertions, the trait abstraction is proven correct.
+
+---
 
 ## Backend Testing Details
 
-### LocalFs (POSIX Filesystem)
-**Status**: Fully automated
+### LocalFs (Reference Implementation)
 
-- Uses temporary directories via `tempfile` crate
-- Real filesystem operations
-- No mocking required
-- Runs on all platforms
+- Uses `tempfile` for ephemeral directories
+- Real POSIX operations
+- **Verified**: Trait contract satisfied by direct implementation
 
-### BrowserFs (OPFS/WebSocket)
-**Status**: Automated via mock
+### BrowserFs (Production Complexity)
 
-The BrowserFs backend requires WebSocket communication and browser OPFS APIs. For automated testing, we use a mock browser WS peer (`tests/common/mock_browser.rs`) that:
+- Requires WebSocket + OPFS (browser APIs)
+- Tested via mock peer (`tests/common/mock_browser.rs`)
+- **Differential**: Must produce identical results to LocalFs for same inputs
 
-- Simulates OPFS via in-memory HashMap
-- Handles msgpack request/response protocol
-- Runs in separate thread via channels
-- Preserves real `BrowserFsBackend` architecture
+### SSH Backend (Deferred)
 
-**Why mocked at WS boundary**:
-- Real BrowserFsBackend code exercised
-- Real channels, blocking, request/response registry used
-- Only the browser-side OPFS storage mocked
-- CI-friendly, deterministic, fast
+- Implementation complete, manual testing only
+- Docker-based automated tests planned (gated by `NVIM_WEB_TEST_SSH=1`)
+- Trait conformance proven by code structure (same pattern as LocalFs/BrowserFs)
 
-**Manual verification**:
-- Browser OPFS service implemented (`ui/fs/opfs.ts`)
-- Ready for manual end-to-end testing
-- Requires running host + browser UI
-
-### SSH Backend (SFTP)
-**Status**: Implemented, manual testing only
-
-The SSH/SFTP backend (`SshFsBackend`) is fully implemented and wired into the VFS manager using the same `VfsBackend` contract as LocalFs and BrowserFs.
-
-**Implementation details**:
-- Uses `ssh2` crate for SFTP protocol
-- URI format: `vfs://ssh/user@host:port/path`
-- Authentication: SSH agent → `~/.ssh/id_rsa` (CI-safe, no prompts)
-- Blocking I/O matching VfsBackend contract
-
-**Automated testing status**:
-Automated end-to-end SSH testing is **intentionally gated** and not enabled by default in CI due to the operational overhead of managing an SSH server instance.
-
-The architecture proof is already complete:
-- VfsBackend trait proven swappable (LocalFs + BrowserFs automated)
-- SSH backend follows identical pattern (code review + compilation confirms)
-- Zero architectural changes needed to add third backend
-
-**Docker-based SSH test strategy** (deferred):
-
-A fully deterministic automated test approach is documented below and can be enabled via `NVIM_WEB_TEST_SSH=1` environment variable.
-
-#### Automated SSH Test Plan
-
-**Approach**: Ephemeral Docker SSH server
-
-**Steps**:
-1. Spin up `linuxserver/openssh-server` container on port 2222
-2. Generate ephemeral SSH key pair via `ssh-keygen`
-3. Mount public key as authorized_keys
-4. Run tests A-E against `vfs://ssh/test@localhost:2222/path`
-5. Tear down container
-
-**Benefits**:
-- No external SSH server required
-- Deterministic, reproducible
-- CI-ready (Linux runners)
-- Mirrors real-world SSH exactly
-
-**Implementation location**: `tests/common/ssh_harness.rs` (future)
-
-**CI integration**:
-```yaml
-- name: Enable SSH tests
-  if: runner.os == 'Linux'
-  run: |
-    echo "NVIM_WEB_TEST_SSH=1" >> $GITHUB_ENV
-    echo "NVIM_WEB_TEST_SSH_KEY=/tmp/id_rsa" >> $GITHUB_ENV
-```
-
-**When to implement**:
-- Phase 8 hardening
-- Enterprise deployment preparation
-- SFTP edge case validation
-
-**Current phase**: Architecture complete, automated SSH tests deferred (non-architectural)
+---
 
 ## Running Tests
 
 ```bash
-# All tests (LocalFs + BrowserFs)
-cargo test
+# All tests
+cargo test --workspace
 
-# Specific backend swappability tests
+# VFS differential tests only
 cargo test --test vfs_backend_swappability
 
-# With SSH tests (requires Docker, Linux)
+# Enable SSH tests (requires Docker, Linux)
 NVIM_WEB_TEST_SSH=1 cargo test
 ```
 
+---
+
+## What Tests Catch That Verification Cannot
+
+| Category | Example | Why Verification Fails |
+|----------|---------|----------------------|
+| Performance regressions | Slow reconnection | No performance model |
+| Browser quirks | Firefox OPFS gaps | Environment-specific |
+| Network failures | WebSocket timeouts | Non-deterministic I/O |
+| User behavior | Rapid refresh cycles | Unpredictable input |
+
+These require empirical observation, not proofs.
+
+---
+
 ## Test Coverage Summary
 
-| Backend | Unit | Integration | Swappability | Automated |
-|---------|------|-------------|--------------|-----------|
-| LocalFs | 9    | 7           | 5            | ✅        |
-| BrowserFs | -  | -           | 5            | ✅ (mock) |
-| SSH     | -    | -           | -            | ⏸️ (manual) |
+| Backend | Unit | Integration | Differential | Status |
+|---------|------|-------------|--------------|--------|
+| LocalFs | 9 | 7 | 5 | Automated |
+| BrowserFs | - | - | 5 | Automated (mock) |
+| SSH | - | - | - | Manual |
 
-**Total**: 28 automated tests proving VFS abstraction across fundamentally different storage models.
+**Total**: 28 automated tests proving VFS abstraction correctness.

@@ -4,6 +4,10 @@
 
 nvim-web is a dual-component system that bridges native Neovim to the browser.
 
+See also:
+- [Testing Philosophy](./testing.md) — Our test + verify approach
+- [Protocol Specification](./protocol.md) — WebSocket message format
+
 ```mermaid
 graph TB
     subgraph "Browser Environment"
@@ -232,4 +236,3 @@ Install native messaging manifest:
 - Origin validation for allowed origins
 - VFS path sandboxing (prevents traversal attacks)
 - Session tokens for CLI open commands
-
