@@ -12,6 +12,7 @@ mod render;
 mod events;
 mod dom;
 mod opfs;
+mod session;
 
 use grid::GridManager;
 use highlight::HighlightMap;
@@ -60,92 +61,17 @@ pub fn start() -> Result<(), JsValue> {
     // Initial render
     render_state.render_now();
 
-    // Session management: check URL params first, then localStorage
-    let win = window().unwrap();
-    let search = win.location().search().unwrap_or_default();
-    let storage = win.local_storage().ok().flatten();
+    // Initialize session (params, open token, etc)
+    let session_config = session::init_session()?;
+    let ws_url = session_config.ws_url;
+    let open_token = session_config.open_token;
     
-    // Parse ?session= from URL (handles both ?session=x and &session=x)
-    let url_session: Option<String> = if search.contains("session=") {
-        let search_clean = search.trim_start_matches('?');
-        search_clean.split('&')
-            .find(|p| p.starts_with("session="))
-            .and_then(|p| p.strip_prefix("session="))
-            .map(|s| s.to_string())
-    } else {
-        None
-    };
-    
-    // Parse ?open= from URL (magic link)
-    let open_token: Option<String> = if search.contains("open=") {
-        let search_clean = search.trim_start_matches('?');
-        search_clean.split('&')
-            .find(|p| p.starts_with("open="))
-            .and_then(|p| p.strip_prefix("open="))
-            .map(|s| s.to_string())
-    } else {
-        None
-    };
-    
-    // Store project path if we have an open token (will be used after connection)
+    // Store project path if we have an open token
     let project_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let project_name: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-    
-    // If we have an open token, try to claim it
+
     if let Some(ref token) = open_token {
-        web_sys::console::log_1(&format!("MAGIC LINK: Claiming token {}", token).into());
-        // We'll use fetch to claim the token (synchronously via spawn_local later)
-        // For now, store the token - we'll claim it after WS connects
         project_path.borrow_mut().replace(token.clone());
-        show_toast(&format!("Opening project..."));
-    }
-    
-    // Determine session ID: URL param takes priority over localStorage
-    // Track if this is a reconnection to show toast
-    let (ws_url, should_clear_url, _is_reconnection) = match url_session {
-        Some(ref id) if id == "new" => {
-            // Force new session - clear localStorage
-            if let Some(ref s) = storage {
-                let _ = s.remove_item("nvim_session_id");
-            }
-            web_sys::console::log_1(&"SESSION: Forcing new session (URL param)".into());
-            ("ws://127.0.0.1:9001?session=new".to_string(), true, false)
-        }
-        Some(ref id) => {
-            // Join specific session from URL
-            web_sys::console::log_1(&format!("SESSION: Joining session {} (URL param)", id).into());
-            (format!("ws://127.0.0.1:9001?session={}", id), true, true)
-        }
-        None if open_token.is_some() => {
-            // Magic link - always create new session
-            web_sys::console::log_1(&"SESSION: Creating new session for magic link".into());
-            ("ws://127.0.0.1:9001?session=new".to_string(), true, false)
-        }
-        None => {
-            // No URL param, check localStorage
-            let existing_session = storage.as_ref()
-                .and_then(|s| s.get_item("nvim_session_id").ok())
-                .flatten();
-            
-            match existing_session {
-                Some(ref id) => {
-                    web_sys::console::log_1(&format!("SESSION: Reconnecting to session {}", id).into());
-                    (format!("ws://127.0.0.1:9001?session={}", id), false, true)
-                }
-                None => {
-                    web_sys::console::log_1(&"SESSION: Creating new session".into());
-                    ("ws://127.0.0.1:9001?session=new".to_string(), false, false)
-                }
-            }
-        }
-    };
-    
-    // Clean URL after reading session param (removes ?session= and ?open= from address bar)
-    if should_clear_url {
-        if let Ok(history) = win.history() {
-            let pathname = win.location().pathname().unwrap_or_default();
-            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&pathname));
-        }
     }
 
     // Connect to WebSocket with session support
