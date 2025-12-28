@@ -1,0 +1,65 @@
+[package]
+name = "nvim-web-ui"
+description = "Neovim in the Browser - WASM UI frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Workspace dependencies
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+rmpv.workspace = true
+
+[dependencies.web-sys]
+workspace = true
+features = [
+    "CanvasRenderingContext2d",
+    "ClipboardEvent",
+    "CloseEvent",
+    "CssStyleDeclaration",
+    "DataTransfer",
+    "Document",
+    "DomRect",
+    "Element",
+    "Event",
+    "History",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "Location",
+    "Storage",
+    "Window",
+    "WebSocket",
+    "MessageEvent",
+    "BinaryType",
+    "Blob",
+    "ErrorEvent",
+    "KeyboardEvent",
+    "FocusEvent",
+    "MouseEvent",
+    "WheelEvent",
+    "TouchEvent",
+    "Touch",
+    "TouchList",
+    "EventTarget",
+    "console",
+    "TextMetrics",
+    "ResizeObserver",
+    "ResizeObserverEntry",
+    "DomRectReadOnly",
+    "Navigator",
+    "Clipboard",
+    "Headers",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+]
+
+[lints]
+workspace = true

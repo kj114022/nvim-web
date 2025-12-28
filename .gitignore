@@ -1,63 +1,31 @@
-# nvim-web - Neovim in the Browser
-# https://github.com/kj114022/nvim-web
-
 # Rust build artifacts
-target/
-**/*.rs.bk
-*.pdb
-Cargo.lock
+/target/
+**/target/
 
-# WASM build artifacts
-ui/pkg/
-*.wasm
+# Cargo lock files in workspace members (root lock file is committed)
+crates/*/Cargo.lock
 
-# SQLite databases
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+# WASM build output
+crates/ui/pkg/
 
-# IDE and editors
-.vscode/
+# macOS
+.DS_Store
+
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
-.*.sw?
 
-# OS files
-.DS_Store
-Thumbs.db
-Desktop.ini
-.Spotlight-V100
-.Trashes
+# Environment
+.env
+.env.local
+config.toml
 
-# Logs
+# Debug files
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+*.pdb
 
-# Dependencies
-node_modules/
-
-# Archive and notes
-archive/
-*.xml
-
-# Temporary files
-/tmp/
-*.tmp
-*.temp
-
-# Session and config (user-specific)
-.nvim-web/
-
-# Coverage and profiling
-*.profraw
-*.profdata
-coverage/
-lcov.info
-
-# Gemini agent artifacts
-.gemini/
+# Generated files
+*.generated.*

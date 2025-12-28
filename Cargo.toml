@@ -1,0 +1,70 @@
+# nvim-web: Neovim in the Browser
+# Cargo Workspace Configuration
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/host",
+    "crates/ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/kj114022/nvim-web"
+homepage = "https://github.com/kj114022/nvim-web"
+readme = "README.md"
+keywords = ["neovim", "browser", "websocket", "wasm", "editor"]
+categories = ["development-tools", "web-programming"]
+
+# Shared dependencies - use `package = { workspace = true }` in member crates
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+rmpv = "1"
+rmp-serde = "1"
+serde_json = "1"
+
+# WebSocket
+tokio-tungstenite = "0.24"
+tungstenite = "0.24"
+
+# HTTP server
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+http = "1.4.0"
+
+# WASM
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+
+# Error handling
+anyhow = "1"
+
+# Utilities
+lazy_static = "1.4"
+dirs = "5"
+rand = "0.8"
+mime_guess = "2"
+
+# Workspace-level lints
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+# Allow some pedantic lints that are too noisy
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

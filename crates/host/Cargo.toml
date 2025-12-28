@@ -1,0 +1,57 @@
+[package]
+name = "nvim-web-host"
+description = "Neovim in the Browser - WebSocket host for browser-based Neovim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["neovim", "browser", "websocket", "editor", "vim"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# Workspace dependencies
+anyhow.workspace = true
+serde.workspace = true
+rmpv.workspace = true
+rmp-serde.workspace = true
+serde_json.workspace = true
+lazy_static.workspace = true
+dirs.workspace = true
+rand.workspace = true
+mime_guess.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+tokio-tungstenite.workspace = true
+tungstenite.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+http.workspace = true
+
+# Crate-specific dependencies
+ssh2 = "0.9"
+rusqlite = { version = "0.31", features = ["bundled"] }
+toml = "0.8"
+nvim-rs = { version = "0.9", features = ["use_tokio"] }
+rust-embed = { version = "8", features = ["include-exclude"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
+
+[lib]
+name = "nvim_web_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nvim-web-host"
+path = "src/main.rs"
+
+[[bin]]
+name = "nvim-web"
+path = "src/bin/cli.rs"
