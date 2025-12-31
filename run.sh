@@ -5,13 +5,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Check if binary exists and is newer than source
-BINARY="$SCRIPT_DIR/host/target/release/nvim-web-host"
-MAIN_RS="$SCRIPT_DIR/host/src/main.rs"
+BINARY="$SCRIPT_DIR/target/release/nvim-web-host"
+CARGO_TOML="$SCRIPT_DIR/Cargo.toml"
 
-if [ ! -f "$BINARY" ] || [ "$MAIN_RS" -nt "$BINARY" ]; then
+if [ ! -f "$BINARY" ] || [ "$CARGO_TOML" -nt "$BINARY" ]; then
     echo "Building nvim-web..."
-    cd "$SCRIPT_DIR/host"
-    cargo build --release --quiet
+    cd "$SCRIPT_DIR"
+    cargo build --release -p nvim-web-host --quiet
     echo ""
 fi
 

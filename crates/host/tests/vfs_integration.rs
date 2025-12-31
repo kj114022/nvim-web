@@ -52,16 +52,16 @@ async fn vfs_backend_writes_file_correctly() {
 }
 
 /// Test VFS manager path parsing
-#[test]
-fn vfs_manager_parses_paths_correctly() {
+#[tokio::test]
+async fn vfs_manager_parses_paths_correctly() {
     use nvim_web_host::vfs::{LocalFs, VfsManager};
 
     let harness = TestHarness::new().unwrap();
-    let mut manager = VfsManager::new();
+    let manager = VfsManager::new();
     manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())));
 
     // Parse a VFS path
-    let (backend, path) = manager.parse_vfs_path("vfs://local/test/file.txt").unwrap();
+    let (backend, path) = manager.parse_vfs_path("vfs://local/test/file.txt").await.unwrap();
     assert_eq!(backend, "local");
     assert_eq!(path, "test/file.txt");
 }
@@ -74,7 +74,7 @@ async fn vfs_manager_reads_via_backend() {
     let harness = TestHarness::new().unwrap();
     harness.write_file("readme.txt", "VFS content").unwrap();
 
-    let mut manager = VfsManager::new();
+    let manager = VfsManager::new();
     manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())));
 
     // Read via manager
@@ -89,7 +89,7 @@ async fn vfs_manager_writes_via_backend() {
 
     let harness = TestHarness::new().unwrap();
 
-    let mut manager = VfsManager::new();
+    let manager = VfsManager::new();
     manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())));
 
     // Write via manager
@@ -104,20 +104,21 @@ async fn vfs_manager_writes_via_backend() {
 }
 
 /// Test buffer registration in VFS manager
-#[test]
-fn vfs_manager_tracks_buffers() {
+#[tokio::test]
+async fn vfs_manager_tracks_buffers() {
     use nvim_web_host::vfs::{LocalFs, VfsManager};
 
     let harness = TestHarness::new().unwrap();
-    let mut manager = VfsManager::new();
+    let manager = VfsManager::new();
     manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())));
 
     // Register a buffer
     manager
         .register_buffer(42, "vfs://local/test.txt".to_string())
+        .await
         .unwrap();
 
     // Retrieve it
-    let managed = manager.get_managed_buffer(42).unwrap();
+    let managed = manager.get_managed_buffer(42).await.unwrap();
     assert_eq!(managed.vfs_path, "vfs://local/test.txt");
 }

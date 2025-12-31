@@ -7,12 +7,14 @@ pub mod session;
 pub mod ws;
 
 // Virtual filesystem layer
-// pub mod vfs;
 pub use nvim_web_vfs as vfs;
 pub mod vfs_handlers;
 
 // Configuration
 pub mod config;
+
+// SSH tunnel management
+pub mod tunnel;
 
 // REST API
 pub mod api;
@@ -28,3 +30,6 @@ pub mod embedded;
 
 // Project configuration and magic link handling
 pub mod project;
+
+// Session sharing and snapshots
+pub mod sharing;

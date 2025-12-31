@@ -45,12 +45,15 @@ pub fn show_toast(message: &str) {
     }
 }
 
-/// Set dirty state indicator (unsaved changes)
+/// Set dirty state indicator (unsaved changes) - uses status bar
 pub fn set_dirty(dirty: bool) {
     if let Some(doc) = get_document() {
-        // Update dirty indicator visibility
-        if let Some(el) = doc.get_element_by_id("nvim-dirty") {
-            let _ = el.set_attribute("class", if dirty { "show" } else { "" });
+        // Update drawer-modified visibility in status bar (shows "*")
+        if let Some(el) = doc.get_element_by_id("drawer-modified") {
+            let display = if dirty { "inline" } else { "none" };
+            if let Ok(html_el) = el.dyn_into::<web_sys::HtmlElement>() {
+                let _ = html_el.style().set_property("display", display);
+            }
         }
         // Update page title
         let base_title = "Neovim Web";
@@ -129,6 +132,52 @@ pub fn update_drawer_cwd_info(cwd: &str, file: &str, backend: &str, git_branch: 
     }
 }
 
+/// Show macro recording indicator in status bar
+pub fn show_macro_recording(register: &str) {
+    if let Some(doc) = get_document() {
+        // Show the macro indicator element
+        if let Some(el) = doc.get_element_by_id("macro-indicator") {
+            let _ = el.set_attribute("class", "drawer-item macro");
+        }
+        // Update the register display (the span with class macro-reg)
+        if let Some(el) = doc.query_selector(".macro-reg").ok().flatten() {
+            el.set_text_content(Some(&format!("@{register}")));
+        }
+    }
+}
+
+/// Hide macro recording indicator
+pub fn hide_macro_recording() {
+    if let Some(doc) = get_document() {
+        if let Some(el) = doc.get_element_by_id("macro-indicator") {
+            let _ = el.set_attribute("class", "drawer-item macro hidden");
+        }
+    }
+}
+
+// NOTE: set_diagnostics_visible removed - handled by JS toggleDiagnostics() in index.html
+
+/// Update the diagnostics overlay with current metrics
+pub fn update_diagnostics(data: &crate::render::DiagnosticsData) {
+    if let Some(doc) = get_document() {
+        // Update FPS value
+        if let Some(el) = doc.get_element_by_id("diag-fps") {
+            el.set_text_content(Some(&format!("{:.1}", data.fps)));
+        }
+        // Update frame time
+        if let Some(el) = doc.get_element_by_id("diag-frametime") {
+            el.set_text_content(Some(&format!("{:.2}ms", data.frame_time_ms)));
+        }
+        // Update render count
+        if let Some(el) = doc.get_element_by_id("diag-renders") {
+            el.set_text_content(Some(&format!("{}", data.render_count)));
+        }
+        // Update dropped frames
+        if let Some(el) = doc.get_element_by_id("diag-dropped") {
+            el.set_text_content(Some(&format!("{}", data.dropped_frames)));
+        }
+    }
+}
 
 
 /// Setup `ResizeObserver` for the canvas

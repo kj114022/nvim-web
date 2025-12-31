@@ -12,7 +12,9 @@ use nvim_rs::compat::tokio::Compat;
 use nvim_rs::create::tokio::new_child_cmd;
 use nvim_rs::{Handler, Neovim, Value};
 use tokio::process::{ChildStdin, Command};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock as TokioRwLock};
+
+use nvim_web_vfs::VfsManager;
 
 /// Unique session identifier
 pub type SessionId = String;
@@ -44,18 +46,21 @@ pub struct RedrawHandler {
     requests: RequestMap,
     #[allow(dead_code)] // Kept for debugging purposes
     session_id: String,
+    vfs_manager: Arc<TokioRwLock<VfsManager>>,
 }
 
 impl RedrawHandler {
-    pub const fn new(
+    pub fn new(
         session_id: String,
         redraw_tx: broadcast::Sender<Vec<u8>>,
         requests: RequestMap,
+        vfs_manager: Arc<TokioRwLock<VfsManager>>,
     ) -> Self {
         Self {
             redraw_tx,
             requests,
             session_id,
+            vfs_manager,
         }
     }
 }
@@ -67,7 +72,7 @@ impl Handler for RedrawHandler {
     async fn handle_request(
         &self,
         name: String,
-        _args: Vec<Value>,
+        args: Vec<Value>,
         _neovim: Neovim<Self::Writer>,
     ) -> Result<Value, Value> {
         if name == "clipboard_read" {
@@ -108,6 +113,57 @@ impl Handler for RedrawHandler {
                     // Timeout - ensure we remove the sender
                     self.requests.lock().unwrap().remove(&req_id);
                     return Err(Value::String("Clipboard request timed out".into()));
+                }
+            }
+        }
+
+        // VFS read: Read file content from VFS backend
+        // Args: [path] where path is like "vfs://ssh/user@host/path/to/file"
+        if name == "vfs_read" {
+            let path = args.first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Value::String("vfs_read requires path argument".into()))?;
+
+            let vfs = self.vfs_manager.read().await;
+            match vfs.read_file(path).await {
+                Ok(content) => {
+                    // Convert bytes to string (lines) for Neovim
+                    let text = String::from_utf8_lossy(&content);
+                    let lines: Vec<Value> = text.lines()
+                        .map(|l| Value::String(l.to_string().into()))
+                        .collect();
+                    return Ok(Value::Array(lines));
+                }
+                Err(e) => {
+                    return Err(Value::String(format!("VFS read error: {e}").into()));
+                }
+            }
+        }
+
+        // VFS write: Write file content to VFS backend
+        // Args: [path, lines] where lines is an array of strings
+        if name == "vfs_write" {
+            let path = args.first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Value::String("vfs_write requires path argument".into()))?;
+
+            let lines = args.get(1)
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| Value::String("vfs_write requires lines argument".into()))?;
+
+            // Join lines into content with newlines
+            let content: String = lines.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let vfs = self.vfs_manager.read().await;
+            match vfs.write_file(path, content.as_bytes()).await {
+                Ok(()) => {
+                    return Ok(Value::Boolean(true));
+                }
+                Err(e) => {
+                    return Err(Value::String(format!("VFS write error: {e}").into()));
                 }
             }
         }
@@ -174,7 +230,32 @@ impl Handler for RedrawHandler {
             let mut bytes = Vec::new();
             if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
                 let _ = self.redraw_tx.send(bytes);
-                eprintln!("SESSION: CWD changed -> {cwd} (git: {git_branch:?})");
+            }
+        } else if name == "recording_start" {
+            // Macro recording started - args: [register]
+            let register = args
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("q");
+
+            let msg = Value::Array(vec![
+                Value::String("recording_start".into()),
+                Value::String(register.into()),
+            ]);
+
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                let _ = self.redraw_tx.send(bytes);
+            }
+        } else if name == "recording_stop" {
+            // Macro recording stopped
+            let msg = Value::Array(vec![
+                Value::String("recording_stop".into()),
+            ]);
+
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                let _ = self.redraw_tx.send(bytes);
             }
         }
     }
@@ -208,7 +289,7 @@ async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
 impl AsyncSession {
     /// Create a new session with a freshly spawned Neovim instance
     #[allow(clippy::too_many_lines)]
-    pub async fn new() -> Result<Self> {
+    pub async fn new(vfs_manager: Arc<TokioRwLock<VfsManager>>) -> Result<Self> {
         let id = generate_session_id();
         let id_for_log = id.clone();
 
@@ -218,8 +299,8 @@ impl AsyncSession {
         // Create shared request map for host<->browser RPC
         let requests = Arc::new(Mutex::new(HashMap::new()));
 
-        // Create handler that forwards redraws
-        let handler = RedrawHandler::new(id.clone(), redraw_tx.clone(), requests.clone());
+        // Create handler that forwards redraws and has VFS access
+        let handler = RedrawHandler::new(id.clone(), redraw_tx.clone(), requests.clone(), vfs_manager);
 
         // Spawn neovim using nvim-rs
         // --embed: Use stdin/stdout for msgpack RPC
@@ -237,7 +318,6 @@ impl AsyncSession {
         if let Ok(cwd) = std::env::current_dir() {
             let plugin_path = cwd.join("plugin");
             if plugin_path.exists() {
-                eprintln!("SESSION: Adding plugin path: {}", plugin_path.display());
                 cmd.args([
                     "--cmd",
                     &format!("set runtimepath+={}", plugin_path.to_string_lossy()),
@@ -254,9 +334,11 @@ impl AsyncSession {
             }
         });
 
-        // Attach UI with ext_linegrid for modern grid-based rendering
+        // Attach UI with ext_linegrid and ext_multigrid for modern grid-based rendering
+        // ext_multigrid enables proper handling of splits and floating windows
         let mut opts = nvim_rs::UiAttachOptions::default();
         opts.set_linegrid_external(true);
+        opts.set_multigrid_external(true);
         nvim.ui_attach(80, 24, &opts).await?;
 
         // Set up minimal Git command if fugitive isn't available
@@ -264,13 +346,7 @@ impl AsyncSession {
         let check_git = nvim.command_output("silent! command Git").await;
         if check_git.is_err() || check_git.unwrap_or_default().is_empty() {
             let git_cmd = "command! -nargs=* Git execute '!' . 'git ' . <q-args>";
-            if let Err(e) = nvim.command(git_cmd).await {
-                eprintln!("SESSION: Git command setup failed: {e:?}");
-            } else {
-                eprintln!("SESSION: Git command wrapper registered");
-            }
-        } else {
-            eprintln!("SESSION: Git command already exists (likely fugitive)");
+            let _ = nvim.command(git_cmd).await;
         }
 
         // Set up VfsStatus command to show current backend/path info
@@ -290,10 +366,8 @@ function! NvimWeb_ShowVfsStatus()
   echo 'CWD: ' . getcwd()
 endfunction
 ";
-        if let Err(e) = exec_viml(&nvim, vfs_status_cmd).await {
-            eprintln!("SESSION: VfsStatus command setup failed: {e:?}");
-        } else {
-            eprintln!("SESSION: VfsStatus command registered");
+        if let Err(_e) = exec_viml(&nvim, vfs_status_cmd).await {
+            // Non-critical: VfsStatus command setup failed
         }
 
         // Set up auto-CD to git root when opening files
@@ -314,10 +388,8 @@ function! NvimWeb_AutoCdToGitRoot()
   endif
 endfunction
 ";
-        if let Err(e) = exec_viml(&nvim, auto_cd_git).await {
-            eprintln!("SESSION: Auto-CD setup failed: {e:?}");
-        } else {
-            eprintln!("SESSION: Auto-CD to git root enabled");
+        if let Err(_e) = exec_viml(&nvim, auto_cd_git).await {
+            // Non-critical: auto-CD setup failed
         }
 
         // Set up real-time CWD sync - notifies host on DirChanged and BufEnter
@@ -351,15 +423,22 @@ function! NvimWeb_NotifyCwdChanged()
   call rpcnotify(0, 'cwd_changed', l:cwd, l:file, l:backend, l:git_branch)
 endfunction
 "#;
-        if let Err(e) = exec_viml(&nvim, cwd_sync).await {
-            eprintln!("SESSION: CWD sync setup failed: {e:?}");
+        if let Err(_e) = exec_viml(&nvim, cwd_sync).await {
+            // Non-critical: CWD sync setup failed
         } else {
-            eprintln!("SESSION: Real-time CWD sync enabled");
             // Trigger initial sync
-            if let Err(e) = nvim.command("call NvimWeb_NotifyCwdChanged()").await {
-                eprintln!("SESSION: Initial CWD sync failed: {e:?}");
-            }
+            let _ = nvim.command("call NvimWeb_NotifyCwdChanged()").await;
         }
+
+        // Set up macro recording indicator
+        let recording_sync = r#"
+augroup NvimWebRecording
+  autocmd!
+  autocmd RecordingEnter * call rpcnotify(0, 'recording_start', reg_recording())
+  autocmd RecordingLeave * call rpcnotify(0, 'recording_stop')
+augroup END
+"#;
+        let _ = exec_viml(&nvim, recording_sync).await;
 
         eprintln!("SESSION: Created new async session {id}");
 
@@ -433,14 +512,17 @@ pub struct AsyncSessionManager {
     pub timeout: Duration,
     /// Active SSH connection URI (if any)
     pub active_ssh: Option<String>,
+    /// Shared VFS manager for file operations
+    vfs_manager: Arc<TokioRwLock<VfsManager>>,
 }
 
 impl AsyncSessionManager {
-    pub fn new() -> Self {
+    pub fn new(vfs_manager: Arc<TokioRwLock<VfsManager>>) -> Self {
         Self {
             sessions: HashMap::new(),
             timeout: Duration::from_secs(300), // 5 minutes
             active_ssh: None,
+            vfs_manager,
         }
     }
 
@@ -451,7 +533,7 @@ impl AsyncSessionManager {
 
     /// Create a new session and return its ID
     pub async fn create_session(&mut self) -> Result<SessionId> {
-        let session = AsyncSession::new().await?;
+        let session = AsyncSession::new(self.vfs_manager.clone()).await?;
         let id = session.id.clone();
         self.sessions.insert(id.clone(), session);
         Ok(id)
@@ -506,11 +588,7 @@ impl AsyncSessionManager {
     }
 }
 
-impl Default for AsyncSessionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: Default impl removed because AsyncSessionManager::new() requires VfsManager parameter
 
 /// Session metadata for API responses
 #[derive(Debug, Clone, serde::Serialize)]

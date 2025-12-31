@@ -23,7 +23,7 @@ graph TB
         WS["WebSocket Server<br/>(port 9001)"]
         Bridge["RPC Bridge"]
         Nvim["Neovim Process<br/>(--embed)"]
-        VFS["Virtual FS<br/>(local, browser, ssh)"]
+        VFS["Virtual FS<br/>(local, mem, overlay, ssh)"]
         
         WS <--> Bridge
         Bridge <--> Nvim
@@ -45,11 +45,13 @@ graph LR
         rpc["rpc.rs"]
         nvim["nvim.rs"]
         vfs["vfs/"]
+        sharing["sharing.rs"]
         
         main --> nvim
         main --> ws
         ws --> rpc
         ws --> vfs
+        ws --> sharing
         rpc --> nvim
     end
 ```
@@ -60,7 +62,8 @@ graph LR
 | `ws.rs` | WebSocket handling, connection lifecycle, message routing |
 | `rpc.rs` | Neovim RPC protocol (msgpack encoding/decoding) |
 | `nvim.rs` | Neovim process management (`nvim --embed`) |
-| `vfs/` | Virtual filesystem backends (local, browser OPFS, SSH) |
+| `vfs/` | Virtual filesystem backends (local, memory, overlay, SSH) |
+| `sharing.rs` | Share link management and workspace snapshots |
 
 ### UI (nvim-web-ui)
 
@@ -156,11 +159,15 @@ graph LR
         Local["LocalFs<br/>(/tmp/nvim-web)"]
         Browser["BrowserFs<br/>(OPFS)"]
         SSH["SSH Fs<br/>(on-demand)"]
+        Memory["MemoryFs<br/>(ephemeral)"]
+        Overlay["OverlayFs<br/>(layered)"]
     end
     
     Manager["VfsManager"] --> Local
     Manager --> Browser
     Manager --> SSH
+    Manager --> Memory
+    Manager --> Overlay
 ```
 
 URLs:
@@ -207,6 +214,20 @@ graph LR
     SessionManager -->|lookup| Session
     Session -->|broadcast channel| Neovim
 ```
+
+## Session Sharing & Persistence
+
+Beyond basic persistence, sessions can be shared or snapshot:
+
+### Share Links
+- **ReadOnly**: View-only access to a running session
+- **Time-limited**: Auto-expiry (e.g., 1 hour)
+- **Use-limited**: Maximum number of concurrent viewers
+
+### Snapshots
+- Captures state: CWD, open files, cursor positions
+- Independent of original session (cloned state)
+- Resumable as a new session
 
 ## Native Messaging (Chrome Extension)
 

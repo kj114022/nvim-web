@@ -7,6 +7,7 @@
 #![allow(clippy::ptr_arg)]
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use web_sys::{window, HtmlCanvasElement};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -22,6 +23,9 @@ mod opfs;
 mod session;
 mod handler;
 mod network;
+mod drawer;
+
+use wasm_bindgen_futures::spawn_local;
 
 use grid::GridManager;
 use highlight::HighlightMap;
@@ -36,10 +40,14 @@ use render::RenderState;
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-    let document = window().unwrap().document().unwrap();
+    web_sys::console::log_1(&"[WASM] start() called".into());
+    let document = window()
+        .ok_or("No window found")?
+        .document()
+        .ok_or("No document found")?;
     let canvas = document
         .get_element_by_id("nvim")
-        .unwrap()
+        .ok_or("Canvas element #nvim not found")?
         .dyn_into::<HtmlCanvasElement>()?;
 
     let renderer = Renderer::new(canvas.clone());
@@ -70,11 +78,47 @@ pub fn start() -> Result<(), JsValue> {
     render_state.render_now();
 
     // Initialize session (params, open token, etc)
-    let session_config = session::init_session()?;
+    web_sys::console::log_1(&"[WASM] Calling init_session()".into());
+    let session_config = match session::init_session()? {
+        Some(config) => {
+            web_sys::console::log_1(&format!("[WASM] Session config: {}", config.ws_url).into());
+            config
+        }
+        None => {
+            // No session active - Show Dashboard in Drawer
+            let drawer = document.get_element_by_id("nvim-drawer");
+            // We use 'drawer-panels' as the container for all modular panels
+            let panels = document.get_element_by_id("drawer-panels");
+            
+            if let (Some(drawer), Some(panels)) = (drawer, panels) {
+                 // Expand drawer to full screen
+                 let _ = drawer.class_list().remove_1("collapsed");
+                 let _ = drawer.class_list().add_1("expanded-dashboard");
+                 
+                 // Show panels container
+                 let _ = panels.class_list().remove_1("hidden");
+                 
+                 // Initialize Modular Drawer (renders sessions, binds tabs)
+                 // Initialize Modular Drawer (renders sessions, binds tabs)
+                 spawn_local(async {
+                     if let Err(e) = drawer::init().await {
+                         web_sys::console::error_2(&"[Drawer] Init Failed:".into(), &e);
+                     } else {
+                         web_sys::console::log_1(&"[Drawer] Init Success".into());
+                     }
+                 });
+                 
+                 // NOTE: Button binding removed - handled by failsafe JS script
+                 // This prevents duplicate event listeners (race condition fix)
+            }
+
+            return Ok(());
+        }
+    };
+
     let ws_url = session_config.ws_url;
     let open_token = session_config.open_token;
     
-    // Store project path if we have an open token
     // Store project path if we have an open token
     let project_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let _project_name: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
@@ -84,7 +128,7 @@ pub fn start() -> Result<(), JsValue> {
     }
 
     // Connect to WebSocket with session support
-    // Connect to WebSocket with session support
+    web_sys::console::log_1(&format!("[WASM] Connecting to WebSocket: {}", ws_url).into());
     let ws = network::setup_websocket(
         &ws_url,
         initial_cols as u32,
@@ -93,6 +137,7 @@ pub fn start() -> Result<(), JsValue> {
         render_state.clone(),
         highlights,
     )?;
+    web_sys::console::log_1(&"[WASM] WebSocket setup complete".into());
 
     // Expose WS to window for debugging
     let _ = js_sys::Reflect::set(
@@ -128,6 +173,52 @@ pub fn start() -> Result<(), JsValue> {
     // Focus the wrapper on startup
     editor_root.focus()?;
     web_sys::console::log_1(&"EDITOR FOCUS INITIALIZED".into());
+
+    // Wire selection text extraction for drag-to-select copy
+    let grids_for_selection = grids.clone();
+    let selection_callback = Closure::wrap(Box::new(move |e: web_sys::CustomEvent| {
+        if let Some(detail) = e.detail().dyn_ref::<js_sys::Object>() {
+            let start_row = js_sys::Reflect::get(detail, &"startRow".into())
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let end_row = js_sys::Reflect::get(detail, &"endRow".into())
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let start_col = js_sys::Reflect::get(detail, &"startCol".into())
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let end_col = js_sys::Reflect::get(detail, &"endCol".into())
+                .ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let result = js_sys::Reflect::get(detail, &"result".into()).ok();
+            
+            // Extract text from grid cells (using flat index)
+            let grids = grids_for_selection.borrow();
+            if let Some(grid) = grids.main_grid() {
+                let mut text = String::new();
+                for row in start_row..=end_row.min(grid.rows.saturating_sub(1)) {
+                    let row_start = if row == start_row { start_col } else { 0 };
+                    let row_end = if row == end_row { end_col } else { grid.cols.saturating_sub(1) };
+                    
+                    for col in row_start..=row_end.min(grid.cols.saturating_sub(1)) {
+                        let idx = row * grid.cols + col;
+                        if idx < grid.cells.len() {
+                            text.push(grid.cells[idx].ch);
+                        }
+                    }
+                    if row < end_row {
+                        text.push('\n');
+                    }
+                }
+                
+                // Set result.text
+                if let Some(result_obj) = result {
+                    let _ = js_sys::Reflect::set(&result_obj, &"text".into(), &text.into());
+                }
+            }
+        }
+    }) as Box<dyn FnMut(_)>);
+    
+    window()
+        .unwrap()
+        .add_event_listener_with_callback("get-selection-text", selection_callback.as_ref().unchecked_ref())?;
+    selection_callback.forget();
 
     Ok(())
 }

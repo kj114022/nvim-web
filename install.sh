@@ -6,19 +6,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${1:-/usr/local/bin}"
 
 echo "Building nvim-web..."
-cd "$SCRIPT_DIR/host"
-cargo build --release
+cd "$SCRIPT_DIR"
+cargo build --release -p nvim-web-host
 
 echo ""
 echo "Installing to $INSTALL_DIR..."
 
 # Check if we need sudo
 if [ -w "$INSTALL_DIR" ]; then
-    cp "$SCRIPT_DIR/host/target/release/nvim-web-host" "$INSTALL_DIR/nvim-web"
+    cp "$SCRIPT_DIR/target/release/nvim-web-host" "$INSTALL_DIR/nvim-web"
     chmod +x "$INSTALL_DIR/nvim-web"
 else
     echo "Need sudo access to install to $INSTALL_DIR"
-    sudo cp "$SCRIPT_DIR/host/target/release/nvim-web-host" "$INSTALL_DIR/nvim-web"
+    sudo cp "$SCRIPT_DIR/target/release/nvim-web-host" "$INSTALL_DIR/nvim-web"
     sudo chmod +x "$INSTALL_DIR/nvim-web"
 fi
 

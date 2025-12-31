@@ -2,16 +2,6 @@
 
 Neovim in the browser. Real Neovim, not an emulation.
 
-## Philosophy
-
-This project transports Neovim to the browser—it does not reimplement it. The full power of Neovim (plugins, LSP, treesitter, your config) works natively because we embed the real thing.
-
-**Design principles:**
-
-- **Transport, don't reimplement** — The protocol carries Neovim events faithfully
-- **Test + Verify** — Type-safe contracts via Rust; empirical testing for real-world failures
-- **Minimal by default** — No bloat; features behind settings
-
 ## Quick Start
 
 ```bash
@@ -21,56 +11,109 @@ cargo build --release -p nvim-web-host
 
 # Open browser
 open http://localhost:8080
-```
 
-## Magic Link
+# Or run with Docker (includes SSH test server)
+docker-compose up
 
-Open any project from terminal directly in the browser:
-
-```bash
-nvim-web open /path/to/project
-nvim-web open .
 ```
 
 ## Features
 
-- Full Neovim rendering on canvas
-- Single binary (UI assets embedded)
-- Session persistence across refreshes
-- VFS backends: local, browser OPFS, SSH
-- Real-time CWD and git branch sync
-- PWA installable
+- **Real Neovim** - Your config, plugins, LSP, treesitter all work
+- **Single Binary** - UI assets embedded, no external dependencies
+- **Multi-grid Support** - Split windows, floating windows, cmdline
+- **VFS Backends** - Local, Overlay, Memory, Browser OPFS, SSH/SFTP, Git, HTTP
+- **Session Sharing** - Share read-only links and create workspace snapshots
+- **Session Persistence** - Reconnect to existing sessions
+- **PWA Installable** - Install as desktop app
+- **Keyboard Passthrough** - All Neovim keybindings work
 
 ## CLI
 
 ```bash
-nvim-web                  # Start server
+nvim-web                  # Start server on localhost:8080
 nvim-web open [PATH]      # Open project in browser
 nvim-web --help           # Help
 nvim-web --version        # Version
 ```
 
-## Keyboard
+## Magic Link
 
-All Neovim keybindings work. The UI intercepts browser shortcuts (Cmd+W, etc.) to prevent conflicts.
+Open projects instantly from terminal with optional QR codes and GitHub support.
 
-## VFS Commands
+### Local Projects
 
-| Command | Description |
-| ------- | ----------- |
-| `:e path` | Open file |
-| `:E @local/path` | Server filesystem |
-| `:E @browser/path` | Browser OPFS |
-| `:E @ssh/user@host/path` | SSH remote |
-| `:VfsStatus` | Current backend |
+```bash
+# Open current directory
+nvim-web open .
 
-## URL Parameters
+# Open file at specific line
+nvim-web open src/main.rs:42
 
-| Parameter | Description |
-| --------- | ----------- |
-| `?session=new` | Force new session |
-| `?session=<id>` | Reconnect to session |
-| `?open=<token>` | Magic link token |
+# With QR code for mobile
+nvim-web open . --qr
+
+# Shareable link (1 hour expiry)
+nvim-web open . --share --duration 1h
+```
+
+### GitHub Repositories
+
+```bash
+# Clone and open any GitHub repo
+nvim-web open github.com/neovim/neovim
+
+# Open specific file at line
+nvim-web open github.com/owner/repo/blob/main/src/lib.rs#L42
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--qr` | Display scannable QR code |
+| `--share` | Create multi-use link |
+| `--duration` | Link expiry (e.g., `1h`, `30m`, `1d`) |
+| `-f, --file` | Target file to open |
+| `-l, --line` | Line number to jump to |
+
+## Install
+
+```bash
+# From source
+./install.sh
+
+# Or manually
+cargo build --release -p nvim-web-host
+cp target/release/nvim-web-host /usr/local/bin/nvim-web
+```
+
+## Configuration
+
+Copy `config.example.toml` to `~/.config/nvim-web/config.toml`:
+
+```toml
+[server]
+ws_port = 9001
+http_port = 8080
+bind = "127.0.0.1"
+
+[session]
+timeout = 300
+max_sessions = 10
+```
+
+## VFS Backends
+
+| Backend | URI Format | Description |
+|---------|------------|-------------|
+| Local | `/path/to/file` | Server filesystem |
+| SSH | `vfs://ssh/user@host:22/path` | SFTP access |
+| Git | `vfs://git/.@HEAD/path` | Git history |
+| HTTP | `vfs://http/https://...` | Remote files (read-only) |
+| Browser | `vfs://browser/path` | Browser OPFS storage |
+| Overlay | (Configuration only) | Layered filesystem (Read-only + Write layer) |
+| Memory | (Configuration only) | In-memory ephemeral storage |
 
 ## Architecture
 
@@ -78,38 +121,43 @@ All Neovim keybindings work. The UI intercepts browser shortcuts (Cmd+W, etc.) t
 Browser (WASM)          Host (Rust)           Neovim
 +-----------+          +------------+        +-------+
 | Canvas UI | <--WS--> | nvim-web   | <--->  | nvim  |
-+-----------+          | -host      |        +-------+
++-----------+          | host       |        +-------+
                        +------------+
 ```
 
-See [docs/architecture.md](./docs/architecture.md) for details.
+### Crates
 
-## Testing
+| Crate | Description |
+|-------|-------------|
+| `nvim-web-host` | HTTP/WebSocket server with embedded UI |
+| `nvim-web-ui` | Browser UI (WASM, canvas rendering) |
+| `nvim-web-vfs` | Virtual filesystem backends |
+| `nvim-web-protocol` | Shared message types |
 
-We apply Verification-Guided Development:
+## Development
 
-- **Verified**: Trait contracts (`VfsBackend`)
-- **Tested**: Differential tests across backends
-- **Empirical**: Real-world failure modes (network, browser quirks)
+```bash
+# Build all crates
+cargo build
 
-See [docs/testing.md](./docs/testing.md) for our testing philosophy.
+# Run tests
+cargo test
 
-## Project Structure
+# Build UI (WASM) - only needed when modifying UI
+cd crates/ui && wasm-pack build --target web
 
-| Directory | Purpose |
-| --------- | ------- |
-| `crates/host` | Rust host with embedded UI |
-| `crates/ui` | WASM browser UI |
-| `crates/vfs` | Virtual filesystem backends |
-| `crates/protocol` | Message types |
-| `plugin/` | Neovim VFS plugin |
-| `docs/` | Architecture, protocol, testing docs |
+# Build release
+cargo build --release -p nvim-web-host
+
+# Format and lint
+cargo fmt && cargo clippy
+```
 
 ## Requirements
 
 - Rust 1.70+
 - Neovim 0.9+
-- wasm-pack (for UI development only)
+- wasm-pack (UI development only)
 
 ## License
 

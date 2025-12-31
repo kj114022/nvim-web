@@ -172,8 +172,8 @@ pub fn setup_input_listeners(
     // 3. IME / Input (on hidden textarea)
     setup_ime_listener(&input_queue);
 
-    // 4. Mouse (mousedown on wrapper)
-    setup_mouse_listener(&input_queue, editor_root, canvas, renderer.clone())?;
+    // 4. Mouse (mousedown on wrapper) - with multigrid support
+    setup_mouse_listener(&input_queue, editor_root, canvas, renderer.clone(), grids.clone())?;
     
     // 5. Scroll (wheel on wrapper)
     setup_scroll_listener(&input_queue, editor_root)?;
@@ -184,8 +184,8 @@ pub fn setup_input_listeners(
     // 7. Paste
     setup_paste_listener(&input_queue, editor_root)?;
     
-    // 8. Touch
-    setup_touch_listener(&input_queue, editor_root, canvas, renderer.clone())?;
+    // 8. Touch (with multigrid support)
+    setup_touch_listener(&input_queue, editor_root, canvas, renderer.clone(), grids.clone())?;
 
     Ok(input_queue)
 }
@@ -243,6 +243,7 @@ fn setup_keyboard_listener(input_queue: &Rc<InputQueue>, editor_root: &HtmlEleme
         };
         
         input_queue_key.send_key(&nvim_key);
+        set_dirty(true);
         e.prevent_default();
     }) as Box<dyn FnMut(_)>);
     
@@ -300,7 +301,8 @@ fn setup_mouse_listener(
     input_queue: &Rc<InputQueue>, 
     editor_root: &HtmlElement, 
     canvas: &HtmlCanvasElement, 
-    renderer: Rc<Renderer>
+    renderer: Rc<Renderer>,
+    grids: Rc<RefCell<GridManager>>,
 ) -> Result<(), JsValue> {
     let input_queue_mouse = input_queue.clone();
     let canvas_mouse = canvas.clone();
@@ -316,11 +318,28 @@ fn setup_mouse_listener(
         let y = e.client_y() as f64 - rect.top();
         
         let (cell_w, cell_h) = renderer.cell_size();
-        let col = (x / cell_w).floor() as i32;
-        let row = (y / cell_h).floor() as i32;
+        let screen_col = (x / cell_w).floor() as i32;
+        let screen_row = (y / cell_h).floor() as i32;
         
-        let mouse_input = format!("<LeftMouse><{col},{row}>");
-        input_queue_mouse.send_key(&mouse_input);
+        // Find which grid contains the click and get local coordinates
+        let (grid_id, local_row, local_col) = grids.borrow().find_grid_at_position(screen_row, screen_col);
+        
+        // Send input_mouse RPC message with grid ID for multigrid support
+        // Format: ["input_mouse", button, action, modifier, grid, row, col]
+        let msg = rmpv::Value::Array(vec![
+            rmpv::Value::String("input_mouse".into()),
+            rmpv::Value::String("left".into()),   // button
+            rmpv::Value::String("press".into()),  // action
+            rmpv::Value::String("".into()),       // modifier (empty = none)
+            rmpv::Value::Integer(grid_id.into()),
+            rmpv::Value::Integer(local_row.into()),
+            rmpv::Value::Integer(local_col.into()),
+        ]);
+        
+        let mut bytes = Vec::new();
+        if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+            input_queue_mouse.enqueue(bytes);
+        }
     }) as Box<dyn FnMut(_)>);
     
     editor_root.add_event_listener_with_callback("mousedown", onmousedown.as_ref().unchecked_ref())?;
@@ -401,7 +420,8 @@ fn setup_touch_listener(
     input_queue: &Rc<InputQueue>,
     editor_root: &HtmlElement,
     canvas: &HtmlCanvasElement, 
-    renderer: Rc<Renderer>
+    renderer: Rc<Renderer>,
+    grids: Rc<RefCell<GridManager>>,
 ) -> Result<(), JsValue> {
     let input_queue_touch = input_queue.clone();
     let canvas_touch = canvas.clone();
@@ -419,11 +439,27 @@ fn setup_touch_listener(
             let y = touch.client_y() as f64 - rect.top();
             
             let (cell_w, cell_h) = renderer.cell_size();
-            let col = (x / cell_w).floor() as i32;
-            let row = (y / cell_h).floor() as i32;
+            let screen_col = (x / cell_w).floor() as i32;
+            let screen_row = (y / cell_h).floor() as i32;
             
-            let mouse_input = format!("<LeftMouse><{col},{row}>");
-            input_queue_touch.send_key(&mouse_input);
+            // Find which grid contains the touch and get local coordinates
+            let (grid_id, local_row, local_col) = grids.borrow().find_grid_at_position(screen_row, screen_col);
+            
+            // Send input_mouse RPC message with grid ID for multigrid support
+            let msg = rmpv::Value::Array(vec![
+                rmpv::Value::String("input_mouse".into()),
+                rmpv::Value::String("left".into()),
+                rmpv::Value::String("press".into()),
+                rmpv::Value::String("".into()),
+                rmpv::Value::Integer(grid_id.into()),
+                rmpv::Value::Integer(local_row.into()),
+                rmpv::Value::Integer(local_col.into()),
+            ]);
+            
+            let mut bytes = Vec::new();
+            if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                input_queue_touch.enqueue(bytes);
+            }
         }
     }) as Box<dyn FnMut(_)>);
     editor_root.add_event_listener_with_callback("touchstart", ontouchstart.as_ref().unchecked_ref())?;

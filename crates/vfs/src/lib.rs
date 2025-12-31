@@ -4,13 +4,17 @@ pub mod git;
 pub mod http;
 pub mod local;
 pub mod manager;
+pub mod memory;
+pub mod overlay;
 pub mod ssh;
 
-pub use backend::{FileStat, VfsBackend};
+pub use backend::{FileStat, ReadChunk, ReadHandle, VfsBackend, WriteHandle};
 pub use browser::{BrowserFsBackend, FsRequestRegistry};
 pub use git::GitFsBackend;
 pub use http::HttpFsBackend;
 pub use local::LocalFs;
 pub use manager::{ManagedBuffer, VfsManager};
+pub use memory::MemoryFs;
+pub use overlay::OverlayFs;
 pub use ssh::SshFsBackend;
 

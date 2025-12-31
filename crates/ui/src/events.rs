@@ -235,7 +235,68 @@ pub fn apply_redraw(grids: &mut GridManager, highlights: &mut HighlightMap, msg:
                                         }
                                     }
                                 }
-                                _ => {}
+                                Some("msg_set_pos") => {
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 4 {
+                                                // [grid, row, scrolled, sep_char]
+                                                if let (
+                                                    rmpv::Value::Integer(grid_id),
+                                                    rmpv::Value::Integer(row),
+                                                    _, // scrolled
+                                                    _  // sep_char
+                                                ) = (&args[0], &args[1], &args[2], &args[3]) {
+                                                    let gid = grid_id.as_u64().unwrap_or(0) as u32;
+                                                    let r = row.as_i64().unwrap_or(0) as i32;
+                                                    // Message grid is always full width, col 0
+                                                    grids.set_win_pos(gid, r, 0);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("default_colors_set") => {
+                                    // default_colors_set: [fg, bg, sp, cterm_fg, cterm_bg]
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if args.len() >= 2 {
+                                                let fg = if let rmpv::Value::Integer(v) = &args[0] {
+                                                    Some(v.as_u64().unwrap_or(0xCCCCCC) as u32)
+                                                } else { None };
+                                                let bg = if let rmpv::Value::Integer(v) = &args[1] {
+                                                    Some(v.as_u64().unwrap_or(0x1a1a1a) as u32)
+                                                } else { None };
+                                                highlights.set_default_colors(fg, bg);
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("flush") => {
+                                    // flush event signals end of redraw batch
+                                    // No action needed - rendering happens on each redraw event
+                                }
+                                Some("mode_change") => {
+                                    // mode_change: [mode_name, mode_idx]
+                                    // Tracks current Neovim mode for cursor rendering
+                                    for call in &ev[1..] {
+                                        if let rmpv::Value::Array(args) = call {
+                                            if !args.is_empty() {
+                                                if let rmpv::Value::String(mode_name) = &args[0] {
+                                                    if let Some(mode) = mode_name.as_str() {
+                                                        grids.set_mode(mode);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("mode_info_set") => {
+                                    // mode_info_set: [cursor_style_enabled, mode_info]
+                                    // Contains cursor style info per mode - ignored for now
+                                }
+                                unknown => {
+                                    web_sys::console::warn_1(&format!("Unhandled event: {unknown:?}").into());
+                                }
                             }
                         }
                     }

@@ -39,6 +39,9 @@ rust-embed = { version = "8", features = ["include-exclude"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 nvim-web-protocol = { path = "../protocol" }
 nvim-web-vfs = { path = "../vfs" }
+qr2term = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

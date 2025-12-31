@@ -1,0 +1,27 @@
+# Build artifacts
+target/
+*.rlib
+*.rmeta
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/fixtures/large_*
+
+# Logs
+*.log
+
+# WASM build (for rebuild)
+crates/ui/pkg/

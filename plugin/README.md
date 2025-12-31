@@ -22,7 +22,7 @@ vim.opt.runtimepath:append("/path/to/nvim-web/plugin")
 require("nvim-web").setup()
 ```
 
-## Commands
+## VFS Commands
 
 | Command | Description |
 |---------|-------------|
@@ -30,6 +30,30 @@ require("nvim-web").setup()
 | `:E @browser/path` | Open file from browser OPFS |
 | `:E @ssh/user@host/path` | Open file from SSH remote |
 | `:VfsStatus` | Show current buffer's VFS backend |
+
+## Git Commands
+
+Built-in Git integration (no external plugins required):
+
+| Command | Description |
+|---------|-------------|
+| `:Git [args]` | Run any git command |
+| `:G [args]` | Short alias for :Git |
+| `:Gstatus` | Git status |
+| `:Gdiff [file]` | Git diff (current file or all) |
+| `:Glog [n]` | Git log (default 20 commits) |
+| `:Gblame` | Git blame current file |
+| `:Gadd [file]` | Stage file (current if no arg) |
+| `:Gcommit [msg]` | Commit (inline message optional) |
+| `:Gpush` | Push to remote |
+| `:Gpull` | Pull from remote |
+
+### Features
+
+- **Tab completion** for subcommands and file paths
+- **Syntax highlighting** for diff, log, blame output
+- **Output buffer** with `q` to close for long output
+- **Error handling** with exit code display
 
 ## File Browsing
 
@@ -43,26 +67,9 @@ Use Neovim's built-in netrw:
 
 Or install a file explorer plugin:
 
-- [oil.nvim](https://github.com/stevearc/oil.nvim) - Edit filesystem like a buffer
-- [nvim-tree](https://github.com/nvim-tree/nvim-tree.lua) - Tree explorer
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) - Fuzzy finder
-
-## Git
-
-Use shell commands:
-
-```vim
-:!git status
-:!git diff
-:!git add %
-:!git commit -m "message"
-```
-
-Or install git plugins:
-
-- [fugitive.vim](https://github.com/tpope/vim-fugitive) - Git wrapper
-- [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) - Git signs in gutter
-- [lazygit.nvim](https://github.com/kdheepak/lazygit.nvim) - LazyGit integration
+- [oil.nvim](https://github.com/stevearc/oil.nvim)
+- [nvim-tree](https://github.com/nvim-tree/nvim-tree.lua)
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 
 ## License
 

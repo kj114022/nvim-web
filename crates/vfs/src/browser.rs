@@ -190,6 +190,9 @@ impl VfsBackend for BrowserFsBackend {
                 is_file,
                 is_dir,
                 size,
+                created: None,
+                modified: None,
+                readonly: false,
             })
         } else {
             bail!("Unexpected response type for stat")

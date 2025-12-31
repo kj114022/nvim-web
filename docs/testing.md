@@ -54,9 +54,10 @@ Focus: Backend registration, URI parsing, error propagation.
 
 **This is our VGD implementation.** The same test logic runs against multiple backends:
 - `LocalFs` (real filesystem)
+- `MemoryFs` (in-memory emulation)
 - `BrowserFs` (mocked WebSocket peer)
 
-If both pass with identical assertions, the trait abstraction is proven correct.
+If all pass with identical assertions, the trait abstraction is proven correct.
 
 ---
 
@@ -76,8 +77,8 @@ If both pass with identical assertions, the trait abstraction is proven correct.
 
 ### SSH Backend (Deferred)
 
-- Implementation complete, manual testing only
-- Docker-based automated tests planned (gated by `NVIM_WEB_TEST_SSH=1`)
+- Implementation complete, integration tests active in CI
+- Docker-based automated tests (`pytest` style logic in Rust)
 - Trait conformance proven by code structure (same pattern as LocalFs/BrowserFs)
 
 ---
@@ -115,7 +116,18 @@ These require empirical observation, not proofs.
 | Backend | Unit | Integration | Differential | Status |
 |---------|------|-------------|--------------|--------|
 | LocalFs | 9 | 7 | 5 | Automated |
+| MemoryFs | 4 | - | 5 | Automated |
+| OverlayFs | - | 3 | - | Automated |
 | BrowserFs | - | - | 5 | Automated (mock) |
-| SSH | - | - | - | Manual |
+| SSH | - | 1 | - | Automated (Docker) |
 
-**Total**: 28 automated tests proving VFS abstraction correctness.
+**Total**: 40+ automated tests proving VFS abstraction correctness.
+
+## CI/CD Pipeline
+
+The GitHub Actions workflow ensures rigorous verification:
+
+1. **Test Matrix**: Stable vs Nightly Neovim
+2. **SSH Integration**: Spins up `linuxserver/openssh-server` container for real end-to-end SFTP testing
+3. **WASM Build**: Verifies `nvim-web-ui` compiles to valid WASM
+4. **Release**: Builds and uploads static binaries for tagged releases

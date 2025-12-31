@@ -141,7 +141,14 @@ impl VfsBackend for GitFsBackend {
             0
         };
 
-        Ok(FileStat { is_file, is_dir, size })
+        Ok(FileStat {
+            is_file,
+            is_dir,
+            size,
+            created: None,
+            modified: None,
+            readonly: true, // Git backend is read-only
+        })
     }
 
     async fn list(&self, path: &str) -> Result<Vec<String>> {

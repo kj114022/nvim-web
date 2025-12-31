@@ -6,6 +6,7 @@ pub struct Cell {
     pub ch: char,
     pub hl_id: Option<u32>,
     pub selected: bool,
+    pub dirty: bool,  // Track if cell needs redraw
 }
 
 impl Cell {
@@ -14,6 +15,7 @@ impl Cell {
             ch: ' ',
             hl_id: None,
             selected: false,
+            dirty: true,  // New cells are dirty
         }
     }
 }
@@ -40,6 +42,8 @@ pub struct Grid {
     pub col_offset: i32,
     pub is_float: bool,
     pub is_visible: bool,
+    // Dirty tracking for incremental rendering
+    pub dirty_all: bool,  // Full redraw needed (resize, clear)
 }
 
 impl Grid {
@@ -56,6 +60,7 @@ impl Grid {
             col_offset: 0,
             is_float: false,
             is_visible: true,
+            dirty_all: true,  // New grids need full draw
         }
     }
 
@@ -63,8 +68,12 @@ impl Grid {
     pub fn set_with_hl(&mut self, row: usize, col: usize, ch: char, hl_id: Option<u32>) {
         if row < self.rows && col < self.cols {
             let cell = &mut self.cells[row * self.cols + col];
-            cell.ch = ch;
-            cell.hl_id = hl_id;
+            // Only mark dirty if content actually changed
+            if cell.ch != ch || cell.hl_id != hl_id {
+                cell.ch = ch;
+                cell.hl_id = hl_id;
+                cell.dirty = true;
+            }
         }
     }
 
@@ -73,7 +82,9 @@ impl Grid {
         for cell in &mut self.cells {
             cell.ch = ' ';
             cell.hl_id = None;
+            cell.dirty = true;
         }
+        self.dirty_all = true;
     }
 
     /// Resize grid, preserving content where possible
@@ -97,6 +108,20 @@ impl Grid {
         self.cells = new_cells;
         self.cursor_row = self.cursor_row.min(new_rows.saturating_sub(1));
         self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
+        self.dirty_all = true;  // Resize requires full redraw
+    }
+
+    /// Clear all dirty flags after rendering
+    pub fn mark_clean(&mut self) {
+        self.dirty_all = false;
+        for cell in &mut self.cells {
+            cell.dirty = false;
+        }
+    }
+
+    /// Check if any cell is dirty
+    pub fn has_dirty_cells(&self) -> bool {
+        self.dirty_all || self.cells.iter().any(|c| c.dirty)
     }
 
     /// Scroll a region of the grid
@@ -155,6 +180,8 @@ pub struct GridManager {
     grids: HashMap<u32, Grid>,
     order: Vec<u32>,  // Z-order: first = bottom, last = top
     active_grid: u32,
+    /// Current Neovim mode (e.g., "normal", "insert", "cmdline")
+    current_mode: String,
 }
 
 impl GridManager {
@@ -167,6 +194,7 @@ impl GridManager {
             grids,
             order: vec![1],
             active_grid: 1,
+            current_mode: "normal".to_string(),
         }
     }
 
@@ -257,10 +285,15 @@ impl GridManager {
     /// Set cursor position
     pub fn set_cursor(&mut self, grid_id: u32, row: usize, col: usize) {
         self.active_grid = grid_id;
-        if let Some(grid) = self.grids.get_mut(&grid_id) {
-            grid.cursor_row = row;
-            grid.cursor_col = col;
-        }
+        // Create grid if it doesn't exist (handles cmdline and message grids)
+        let grid = self.grids.entry(grid_id).or_insert_with(|| {
+            if !self.order.contains(&grid_id) {
+                self.order.push(grid_id);
+            }
+            Grid::new(grid_id, 24, 80)
+        });
+        grid.cursor_row = row;
+        grid.cursor_col = col;
     }
 
     /// Get grids in z-order (bottom to top)
@@ -270,9 +303,31 @@ impl GridManager {
             .filter(|g| g.is_visible)
     }
 
+    /// Get all grids mutably (for clearing dirty flags)
+    pub fn grids_mut(&mut self) -> impl Iterator<Item = &mut Grid> {
+        self.grids.values_mut()
+    }
+
     /// Get active grid ID
     pub const fn active_grid_id(&self) -> u32 {
         self.active_grid
+    }
+
+    /// Set current Neovim mode (from mode_change event)
+    pub fn set_mode(&mut self, mode: &str) {
+        self.current_mode = mode.to_string();
+    }
+
+    /// Get current Neovim mode
+    pub fn get_mode(&self) -> &str {
+        &self.current_mode
+    }
+
+    /// Check if currently in cmdline mode
+    pub fn is_cmdline_mode(&self) -> bool {
+        self.current_mode == "cmdline" 
+            || self.current_mode == "cmdline_normal"
+            || self.current_mode.starts_with("c")
     }
 
     /// Get main grid (grid 1) for resize calculations
@@ -285,6 +340,32 @@ impl GridManager {
     #[allow(dead_code)]
     pub fn main_grid_mut(&mut self) -> Option<&mut Grid> {
         self.grids.get_mut(&1)
+    }
+
+    /// Find which grid contains the given screen position (in cell coordinates)
+    /// Returns (grid_id, local_row, local_col) or defaults to grid 1 at (0,0)
+    pub fn find_grid_at_position(&self, screen_row: i32, screen_col: i32) -> (u32, i32, i32) {
+        // Check grids in reverse z-order (top to bottom) so floating windows take priority
+        for &grid_id in self.order.iter().rev() {
+            if let Some(grid) = self.grids.get(&grid_id) {
+                if !grid.is_visible { continue; }
+                
+                let grid_top = grid.row_offset;
+                let grid_left = grid.col_offset;
+                let grid_bottom = grid_top + (grid.rows as i32);
+                let grid_right = grid_left + (grid.cols as i32);
+                
+                if screen_row >= grid_top && screen_row < grid_bottom 
+                    && screen_col >= grid_left && screen_col < grid_right 
+                {
+                    let local_row = screen_row - grid_top;
+                    let local_col = screen_col - grid_left;
+                    return (grid_id, local_row, local_col);
+                }
+            }
+        }
+        // Default to grid 1 at position (0,0) if no grid found
+        (1, screen_row.max(0), screen_col.max(0))
     }
 
     /// Scroll a region within a grid

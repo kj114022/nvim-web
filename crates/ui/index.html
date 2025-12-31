@@ -4,20 +4,317 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#89b4fa">
+  <meta name="theme-color" content="#1a3a5c">
   <meta name="description" content="Neovim in the Browser - Full Neovim experience with WebSocket bridge">
   <title>nvim-web</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="/config.js"></script> <!-- Dynamic config from host -->
   <style>
+    :root {
+      /* New color palette: Blood red, Navy blue, Cyan green */
+      --blood-red: #8B0000;
+      --blood-red-light: #B22222;
+      --navy-blue: #1a3a5c;
+      --navy-blue-dark: #0f2133;
+      --navy-blue-light: #2c5282;
+      --cyan-green: #00b5ad;
+      --cyan-green-light: #38d9d2;
+      --accent-primary: var(--cyan-green);
+      --accent-danger: var(--blood-red);
+      --bg-dark: #0a1219;
+      --bg-medium: #12202c;
+      --bg-light: #1a3040;
+      --text-primary: #e8f4f8;
+      --text-secondary: #8ba3b9;
+      --text-muted: #5a7a90;
+    }
     body {
       margin: 0;
       padding: 0;
-      background: #1a1a1a;
+      background: var(--bg-dark);
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'IBM Plex Sans', sans-serif;
     }
 
+    /* Dashboard Overlay */
+    /* Dashboard in Drawer */
+    #nvim-drawer.expanded-dashboard {
+      height: 60vh !important;
+      background: rgba(30, 30, 30, 0.75) !important;
+      backdrop-filter: blur(25px) saturate(180%);
+      -webkit-backdrop-filter: blur(25px) saturate(180%);
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      box-shadow: 0 -10px 40px rgba(0,0,0,0.4);
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      flex-direction: column;
+      transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1); /* iOS Easing */
+    }
+    
+    #nvim-drawer.expanded-dashboard #drawer-content {
+        display: flex !important;
+        flex-direction: column;
+        width: 100%; height: 100%;
+        align-items: center;
+        padding-top: 30px;
+        padding-bottom: 40px;
+        overflow-y: auto;
+    }
+    
+    /* Segmented Control */
+    .drawer-tabs {
+        display: flex;
+        background: rgba(118, 118, 128, 0.24);
+        padding: 2px;
+        border-radius: 9px;
+        margin-bottom: 24px;
+        width: 100%;
+        max-width: 360px;
+    }
+    .tab-item {
+        flex: 1;
+        text-align: center;
+        padding: 6px 0;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 7px;
+        cursor: pointer;
+        color: #fff;
+        transition: all 0.2s;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .tab-item.active {
+        background: #636366; 
+        box-shadow: 0 3px 8px rgba(0,0,0,0.12), 0 3px 1px rgba(0,0,0,0.04);
+    }
+    .tab-item:not(.active):hover {
+        background: rgba(118, 118, 128, 0.12);
+    }
+
+    /* Panels */
+    .drawer-panel { 
+        width: 100%; 
+        max-width: 600px;
+        display: flex; 
+        flex-direction: column; 
+        align-items: center;
+        animation: fadeIn 0.3s ease;
+    }
+    .drawer-panel.hidden { display: none; }
+    
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Settings & Help Grids */
+    .settings-group, .help-grid {
+        width: 100%;
+        background: rgba(44, 44, 46, 0.6);
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+    .setting-item, .help-item {
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .setting-item:last-child, .help-item:last-child { border-bottom: none; }
+    .help-item span {
+        font-family: monospace;
+        background: rgba(255,255,255,0.1);
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: #eee;
+    }
+
+    /* Settings Controls */
+    .setting-control {
+        background: rgba(118, 118, 128, 0.24);
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        padding: 6px 12px;
+        font-size: 14px;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        cursor: pointer;
+        min-width: 120px;
+    }
+    .setting-control:focus {
+        outline: 2px solid #007AFF;
+        outline-offset: 2px;
+    }
+    .setting-slider-wrap {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .setting-slider {
+        -webkit-appearance: none;
+        width: 100px;
+        height: 6px;
+        background: rgba(118, 118, 128, 0.24);
+        border-radius: 3px;
+        outline: none;
+    }
+    .setting-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 18px;
+        height: 18px;
+        background: #fff;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .setting-val {
+        color: #8e8e93;
+        font-size: 13px;
+        min-width: 40px;
+    }
+
+    /* Connection Form Inputs */
+    .conn-input {
+        background: rgba(30, 30, 30, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        color: #fff;
+        padding: 10px 14px;
+        font-size: 14px;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .conn-input:focus {
+        outline: none;
+        border-color: #007AFF;
+    }
+    .conn-input::placeholder {
+        color: #636366;
+    }
+    .btn-secondary {
+        background: rgba(118, 118, 128, 0.24);
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+    }
+    .btn-secondary:hover {
+        background: rgba(118, 118, 128, 0.4);
+    }
+    .conn-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .conn-item-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .conn-alias {
+        color: #89b4fa;
+        font-weight: 600;
+        font-size: 14px;
+    }
+    .conn-host {
+        color: #8e8e93;
+        font-size: 12px;
+    }
+    .conn-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .conn-btn {
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #fff;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .conn-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+    .conn-btn.danger:hover {
+        background: rgba(255, 107, 107, 0.2);
+        border-color: #ff6b6b;
+        color: #ff6b6b;
+    }
+
+    /* List Group */
+    .dashboard-title {
+      color: #fff;
+      font-size: 28px;
+      margin-bottom: 24px;
+      font-weight: 700;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      letter-spacing: -0.5px;
+    }
+    
+    .session-list {
+      width: 100%;
+      background: rgba(44, 44, 46, 0.6);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 24px;
+      /* Max height to allow scrolling within list if exceedingly long, but simpler to scroll drawer */
+    }
+    
+    .session-item {
+      background: transparent;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .session-item:last-child { border-bottom: none; }
+    .session-item:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    
+    .session-id { 
+        color: #fff; 
+        font-size: 16px; 
+        font-weight: 500;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .session-info { 
+        color: #8e8e93; 
+        font-size: 13px; 
+    }
+    
+    /* Action Button */
+    .btn-new {
+      background: #007AFF; /* iOS Blue */
+      color: #fff;
+      border: none;
+      padding: 12px 0;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 16px;
+      width: 100%;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-new:hover { background: #006ce6; }
+    .btn-new:active { transform: scale(0.98); }
+    
     #editor-root {
       width: 100vw;
       height: calc(100vh - 28px);
@@ -86,6 +383,157 @@
       opacity: 0.95;
     }
 
+    /* Offline Mode Indicator */
+    #offline-indicator {
+      position: fixed;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      z-index: 10000;
+      box-shadow: 0 2px 12px rgba(238, 90, 90, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      animation: slideDown 0.3s ease;
+    }
+    #offline-indicator.hidden {
+      display: none;
+    }
+    #offline-indicator::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: #fff;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes slideDown {
+      from { transform: translateX(-50%) translateY(-100%); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0); opacity: 1; }
+    }
+
+    /* URL Drop Zone Overlay */
+    #url-drop-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(30, 30, 46, 0.92);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+      pointer-events: none;
+    }
+    #url-drop-overlay.active {
+      display: flex;
+      pointer-events: all;
+    }
+    .drop-zone-content {
+      text-align: center;
+      color: #cdd6f4;
+    }
+    .drop-zone-icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      color: #89b4fa;
+      animation: bounce 0.6s ease infinite alternate;
+    }
+    .drop-zone-text {
+      font-size: 20px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .drop-zone-hint {
+      font-size: 14px;
+      color: #6c7086;
+    }
+    @keyframes bounce {
+      from { transform: translateY(0); }
+      to { transform: translateY(-10px); }
+    }
+
+    /* Diagnostics Overlay (F3 toggle) */
+    .diagnostics-overlay {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid #3c3c3c;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: #ccc;
+      z-index: 10000;
+      min-width: 140px;
+    }
+
+    .diagnostics-overlay.hidden {
+      display: none;
+    }
+
+    .diagnostics-overlay .diag-title {
+      color: #89b4fa;
+      font-weight: bold;
+      margin-bottom: 6px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .diagnostics-overlay .diag-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+    }
+
+    .diagnostics-overlay .diag-label {
+      color: #858585;
+    }
+
+    .diagnostics-overlay .diag-value {
+      color: #50fa7b;
+      font-weight: 500;
+    }
+
+    .diagnostics-overlay .diag-value.warning {
+      color: #f1fa8c;
+    }
+
+    .diagnostics-overlay .diag-value.critical {
+      color: #ff5555;
+    }
+
+    /* Text Selection Overlay */
+    #selection-overlay {
+      position: absolute;
+      pointer-events: none;
+      z-index: 100;
+    }
+    .selection-rect {
+      position: absolute;
+      background: rgba(137, 180, 250, 0.35);
+      border: 1px solid rgba(137, 180, 250, 0.6);
+      pointer-events: none;
+    }
+    #editor-root.selecting {
+      cursor: text;
+      user-select: none;
+    }
+    #editor-root.selecting canvas {
+      cursor: text;
+    }
+
     /* Context Menu */
     #nvim-context-menu {
       position: fixed;
@@ -116,6 +564,47 @@
       background: #454545;
       margin: 4px 0;
     }
+    
+    /* Submenu styles */
+    #nvim-context-menu .menu-submenu {
+      position: relative;
+    }
+    #nvim-context-menu .menu-arrow {
+      float: right;
+      margin-left: 8px;
+      color: #858585;
+    }
+    #nvim-context-menu .menu-submenu-content {
+      display: none;
+      position: absolute;
+      left: 100%;
+      top: 0;
+      background: #252526;
+      border: 1px solid #454545;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      min-width: 180px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    #nvim-context-menu .menu-submenu:hover .menu-submenu-content {
+      display: block;
+    }
+    #nvim-context-menu .paste-history-item {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+    }
+    #nvim-context-menu .paste-history-empty {
+      color: #858585;
+      font-style: italic;
+      cursor: default;
+    }
+    #nvim-context-menu .paste-history-empty:hover {
+      background: transparent;
+      color: #858585;
+    }
 
     /* Hidden textarea for IME/mobile input */
     #nvim-input {
@@ -131,21 +620,63 @@
       overflow: hidden;
     }
 
-    /* Dirty state indicator */
+    /* Dirty state indicator - REMOVED, using #drawer-modified in status bar instead */
     #nvim-dirty {
-      position: fixed;
-      top: 8px;
-      left: 8px;
-      color: #f1fa8c;
-      font-size: 12px;
-      font-weight: bold;
-      opacity: 0;
-      transition: opacity 0.2s;
-      z-index: 9999;
+      display: none;
     }
 
-    #nvim-dirty.show {
-      opacity: 0.9;
+    /* Viewer Mode Badge */
+    #viewer-badge {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      background: linear-gradient(135deg, #f39c12, #e67e22);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      z-index: 10000;
+      box-shadow: 0 2px 12px rgba(243, 156, 18, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      animation: slideDown 0.3s ease;
+    }
+    #viewer-badge.hidden {
+      display: none;
+    }
+    #viewer-badge::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: #fff;
+      border-radius: 50%;
+      opacity: 0.8;
+    }
+
+    /* Share Button in Drawer */
+    .share-btn {
+      background: linear-gradient(135deg, #89b4fa, #74a0e8);
+      color: #1e1e2e;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .share-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(137, 180, 250, 0.4);
+    }
+    .share-btn:active {
+      transform: translateY(0);
     }
 
     /* Status Drawer - Glassmorphism style */
@@ -154,18 +685,18 @@
       bottom: 0;
       left: 0;
       right: 0;
-      background: rgba(30, 30, 30, 0.85);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+      background: linear-gradient(180deg, var(--navy-blue-dark) 0%, var(--bg-dark) 100%);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid var(--navy-blue-light);
+      font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
       font-size: 12px;
       z-index: 1000;
-      transition: height 0.15s ease-out;
+      transition: height 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     #nvim-drawer.collapsed {
-      height: 28px;
+      height: 32px;
     }
 
     #nvim-drawer.expanded {
@@ -175,41 +706,62 @@
     .drawer-bar {
       display: flex;
       align-items: center;
-      height: 28px;
-      padding: 0 12px;
-      gap: 12px;
-      color: #858585;
+      height: 32px;
+      padding: 0 16px;
+      gap: 16px;
+      color: var(--text-secondary);
       cursor: pointer;
       user-select: none;
-      background: rgba(255, 255, 255, 0.03);
+      background: linear-gradient(90deg, transparent 0%, rgba(0, 181, 173, 0.05) 50%, transparent 100%);
+      border-bottom: 1px solid rgba(0, 181, 173, 0.15);
     }
 
     .drawer-bar:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: linear-gradient(90deg, transparent 0%, rgba(0, 181, 173, 0.1) 50%, transparent 100%);
     }
 
     .drawer-item {
       white-space: nowrap;
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
+      font-weight: 500;
     }
 
     .drawer-item.cwd {
-      color: #9cdcfe;
+      color: var(--cyan-green);
     }
 
     .drawer-item.file {
-      color: #dcdcaa;
+      color: var(--text-primary);
     }
 
     .drawer-item.git {
-      color: #89d185;
+      color: var(--cyan-green-light);
     }
 
     .drawer-item.session {
-      color: #569cd6;
+      color: var(--navy-blue-light);
       font-size: 11px;
+    }
+
+    .drawer-item.diag-btn {
+      background: #2d2d2d;
+      color: #89b4fa;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .drawer-item.diag-btn:hover {
+      background: #094771;
+      border-color: #89b4fa;
+    }
+    .drawer-item.diag-btn.active {
+      background: #094771;
+      color: #50fa7b;
     }
 
     .drawer-item.modified {
@@ -1038,6 +1590,21 @@
 </head>
 
 <body>
+  <!-- Offline Mode Indicator -->
+  <div id="offline-indicator" class="hidden">Offline Mode</div>
+
+  <!-- Viewer Mode Badge -->
+  <div id="viewer-badge" class="hidden">Viewing Session</div>
+
+  <!-- URL Drop Zone Overlay -->
+  <div id="url-drop-overlay">
+    <div class="drop-zone-content">
+      <div class="drop-zone-icon">&#128279;</div>
+      <div class="drop-zone-text">Drop URL to Open</div>
+      <div class="drop-zone-hint">GitHub, Gist, Pastebin, or any text URL</div>
+    </div>
+  </div>
+
   <!-- Image Preview Modal -->
   <div id="image-preview-modal" class="hidden">
     <button id="image-preview-close">&times;</button>
@@ -1087,9 +1654,38 @@
 
 
   <div id="nvim-toast"></div>
+  
+  <!-- FPS/Latency Diagnostics Overlay (Toggle with F3) -->
+  <div id="diagnostics-overlay" class="diagnostics-overlay hidden">
+    <div class="diag-title">Diagnostics (F3)</div>
+    <div class="diag-row">
+      <span class="diag-label">FPS</span>
+      <span id="diag-fps" class="diag-value">0</span>
+    </div>
+    <div class="diag-row">
+      <span class="diag-label">Frame</span>
+      <span id="diag-frametime" class="diag-value">0ms</span>
+    </div>
+    <div class="diag-row">
+      <span class="diag-label">Renders</span>
+      <span id="diag-renders" class="diag-value">0</span>
+    </div>
+    <div class="diag-row">
+      <span class="diag-label">Dropped</span>
+      <span id="diag-dropped" class="diag-value">0</span>
+    </div>
+  </div>
+  
   <div id="nvim-context-menu" class="hidden">
     <div class="menu-item" data-action="copy">Copy</div>
     <div class="menu-item" data-action="paste">Paste</div>
+    <div class="menu-item menu-submenu" data-action="paste-history">
+      Paste History
+      <span class="menu-arrow">&#9656;</span>
+      <div class="menu-submenu-content" id="paste-history-menu">
+        <div class="menu-item paste-history-empty">No history</div>
+      </div>
+    </div>
     <div class="menu-divider"></div>
     <div class="menu-item" data-action="selectall">Select All</div>
     <div class="menu-divider"></div>
@@ -1101,6 +1697,7 @@
     style="position: absolute; width: 1px; height: 1em; opacity: 0; z-index: 100; overflow: hidden; top: 0; left: 0;"></textarea>
   <div id="editor-root" tabindex="0">
     <canvas id="nvim"></canvas>
+    <div id="selection-overlay"></div>
   </div>
 
   <!-- Status Drawer -->
@@ -1131,49 +1728,230 @@
         <span class="macro-dot"></span>
         <span class="macro-reg">@q</span>
       </div>
+      <button id="diag-toggle-btn" class="drawer-item diag-btn" title="Toggle Diagnostics (Ctrl+Shift+D)">FPS</button>
       <button id="install-app-btn" class="drawer-item install hidden" onclick="installApp()" title="Install App">
         Install
       </button>
       <span class="drawer-item session" id="drawer-session" title="Session ID">session: -</span>
+      <button id="share-btn" class="share-btn hidden" title="Copy Share Link">&#128279; Share</button>
       <button class="drawer-toggle" id="drawer-toggle" title="Toggle Panel">&#9650;</button>
     </div>
 
     <!-- Drawer Content (hidden when collapsed) -->
     <div class="drawer-content" id="drawer-content">
-      <div class="widget-grid" id="widget-grid">
-        <!-- Widgets are rendered here by the widget registry -->
+      <div id="drawer-panels" class="hidden" style="width:100%; display:flex; flex-direction:column; align-items:center;">
+        
+        <!-- Segmented Control -->
+        <div class="drawer-tabs" id="drawer-tabs">
+            <div id="tab-sessions" class="tab-item active">Sessions</div>
+            <div id="tab-connections" class="tab-item">Remote</div>
+            <div id="tab-settings" class="tab-item">Settings</div>
+            <div id="tab-help" class="tab-item">?</div>
+        </div>
+
+        <!-- Sessions Panel -->
+        <div id="panel-sessions" class="drawer-panel">
+            <h2 class="dashboard-title">Sessions</h2>
+            <div class="session-list" id="session-list">
+              <!-- populated by Rust -->
+            </div>
+            <button id="btn-new-dashboard" class="btn-new">New Session</button>
+        </div>
+        
+        <!-- Connections Panel (SSH/Docker) -->
+        <div id="panel-connections" class="drawer-panel hidden">
+            <h2 class="dashboard-title">Remote Connections</h2>
+            
+            <!-- Add Connection Form -->
+            <div class="settings-group">
+                <div class="setting-item" style="flex-direction:column; align-items:stretch; gap:12px;">
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="conn-alias" class="conn-input" placeholder="@work" style="flex:1;">
+                        <select id="conn-type" class="setting-control" style="min-width:80px;">
+                            <option value="ssh">SSH</option>
+                            <option value="docker">Docker</option>
+                        </select>
+                    </div>
+                    <input type="text" id="conn-host" class="conn-input" placeholder="user@hostname:22">
+                    <input type="password" id="conn-password" class="conn-input" placeholder="Password (optional, uses SSH key if empty)">
+                    <div style="display:flex; gap:8px;">
+                        <button id="conn-test" class="btn-secondary">Test</button>
+                        <button id="conn-add" class="btn-new" style="flex:1;">Add Connection</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Saved Connections List -->
+            <h3 style="color:#8e8e93; font-size:13px; margin-bottom:12px; font-weight:500;">Saved Connections</h3>
+            <div class="settings-group" id="connections-list">
+                <div class="setting-item" style="justify-content:center; color:#636366;">
+                    No saved connections
+                </div>
+            </div>
+        </div>
+        
+         <div id="panel-settings" class="drawer-panel hidden">
+            <h2 class="dashboard-title">Settings</h2>
+            <div class="settings-group">
+                <div class="setting-item">
+                    <span>Cursor Style</span>
+                    <select id="setting-cursor" class="setting-control">
+                        <option value="block">Block</option>
+                        <option value="line">Line</option>
+                        <option value="underline">Underline</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <span>Tab Width</span>
+                    <select id="setting-tabwidth" class="setting-control">
+                        <option value="2">2 spaces</option>
+                        <option value="4" selected>4 spaces</option>
+                        <option value="8">8 spaces</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Help Panel -->
+        <div id="panel-help" class="drawer-panel hidden">
+            <h2 class="dashboard-title">Cheat Sheet</h2>
+             <div class="help-grid">
+                <div class="help-item"><span>:q</span> Quit</div>
+                <div class="help-item"><span>:w</span> Save</div>
+                <div class="help-item"><span>Ctrl+n</span> New Tab</div>
+                <div class="help-item"><span>Ctrl+w</span> Close Window</div>
+             </div>
+        </div>
+
       </div>
+      <!-- Widget grid removed -->
     </div>
   </div>
 
-  <script type="module">
-    import init from "./pkg/nvim_web_ui.js";
-    init();
-
-    // Register service worker for PWA
-    if ('serviceWorker' in navigator) {
-      const swReg = await navigator.serviceWorker.register('/sw.js');
-      console.log('SW registered:', swReg.scope);
+  <!-- Failsafe: Synchronous script to show dashboard BEFORE WASM loads -->
+  <script>
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      if (!params.has('session')) {
+        console.log('[Failsafe] Force-opening dashboard');
+        var drawer = document.getElementById('nvim-drawer');
+        var panels = document.getElementById('drawer-panels');
+        if (drawer && panels) {
+          drawer.classList.remove('collapsed');
+          drawer.classList.add('expanded-dashboard');
+          panels.classList.remove('hidden');
+        }
+        
+        // Bind New Session button (works even if WASM fails)
+        var btn = document.getElementById('btn-new-dashboard');
+        if (btn) {
+          btn.onclick = function() {
+            window.location.href = '?session=new';
+          };
+        }
+        
+        // Bind tab switching (works even if WASM fails)
+        var tabs = ['sessions', 'connections', 'settings', 'help'];
+        tabs.forEach(function(tab) {
+          var tabEl = document.getElementById('tab-' + tab);
+          if (!tabEl) return;
+          tabEl.onclick = function() {
+            tabs.forEach(function(t) {
+              var tEl = document.getElementById('tab-' + t);
+              var pEl = document.getElementById('panel-' + t);
+              if (tEl) tEl.classList.remove('active');
+              if (pEl) pEl.classList.add('hidden');
+            });
+            tabEl.classList.add('active');
+            var panelEl = document.getElementById('panel-' + tab);
+            if (panelEl) panelEl.classList.remove('hidden');
+          };
+        });
+      }
       
-      // Listen for updates
-      swReg.addEventListener('updatefound', () => {
-        const newWorker = swReg.installing;
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // New version available
-            if (confirm('New version available! Reload to update?')) {
-              newWorker.postMessage({ type: 'SKIP_WAITING' });
-              window.location.reload();
-            }
+      // Drawer toggle functionality (works regardless of WASM)
+      var drawer = document.getElementById('nvim-drawer');
+      var drawerBar = document.getElementById('drawer-bar');
+      var toggle = document.getElementById('drawer-toggle');
+
+      if (drawer && drawerBar && toggle) {
+        function toggleDrawer() {
+          // Handle both regular and dashboard-expanded states
+          if (drawer.classList.contains('expanded-dashboard')) {
+            drawer.classList.remove('expanded-dashboard');
+            drawer.classList.add('collapsed');
+            var panels = document.getElementById('drawer-panels');
+            if (panels) panels.classList.add('hidden');
+          } else if (drawer.classList.contains('collapsed')) {
+            drawer.classList.remove('collapsed');
+            drawer.classList.add('expanded');
+          } else {
+            drawer.classList.remove('expanded');
+            drawer.classList.add('collapsed');
+          }
+        }
+
+        toggle.addEventListener('click', function(e) {
+          e.stopPropagation();
+          toggleDrawer();
+        });
+
+        drawerBar.addEventListener('click', function(e) {
+          if (e.target !== toggle && !toggle.contains(e.target)) {
+            toggleDrawer();
           }
         });
-      });
-      
-      // Listen for SW messages
+        
+        console.log('[Drawer] Toggle listeners attached');
+      }
+    })();
+  </script>
+
+  <script type="module">
+    import init from "./pkg/nvim_web_ui.js";
+
+    (async function() {
+      try {
+        await init();
+      } catch (e) {
+        console.error('WASM Init Failed:', e);
+        var toast = document.getElementById('nvim-toast');
+        if (toast) {
+          toast.textContent = 'Error: ' + e.message;
+          toast.style.display = 'block';
+        }
+      }
+
+      // Register service worker for PWA
+      if ('serviceWorker' in navigator) {
+        try {
+          var swReg = await navigator.serviceWorker.register('/sw.js');
+          console.log('SW registered:', swReg.scope);
+          
+          // Listen for updates
+          swReg.addEventListener('updatefound', function() {
+            var newWorker = swReg.installing;
+            newWorker.addEventListener('statechange', function() {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New version available
+                if (confirm('New version available! Reload to update?')) {
+                  newWorker.postMessage({ type: 'SKIP_WAITING' });
+                  window.location.reload();
+                }
+              }
+            });
+          });
+        } catch (err) {
+          console.warn('SW registration failed:', err);
+        }
+      }
+    })();
+    
+    // Listen for SW messages (module-level, outside async IIFE)
+    if ('serviceWorker' in navigator && navigator.serviceWorker) {
       navigator.serviceWorker.addEventListener('message', (event) => {
         if (event.data.type === 'SYNC_WRITES') {
           console.log('SW requested sync');
-          // Trigger sync in fs_driver
           window.dispatchEvent(new CustomEvent('vfs-sync-requested'));
         }
         if (event.data.type === 'ONLINE_STATUS') {
@@ -1190,7 +1968,6 @@
       if (indicator) {
         indicator.classList.toggle('hidden', !offline);
       }
-      // Also update connection status dot
       const status = document.getElementById('nvim-status');
       if (status && offline) {
         status.classList.remove('status-connected');
@@ -1222,31 +1999,143 @@
       if (installBtn) installBtn.classList.add('hidden');
     };
     
-    // Drag-drop URL support
-    document.getElementById('editor-root').addEventListener('dragover', (e) => {
+    // URL Drag-Drop with Visual Overlay
+    const dropOverlay = document.getElementById('url-drop-overlay');
+    const editorRoot = document.getElementById('editor-root');
+    let dragCounter = 0;
+    
+    // Show overlay when dragging URL over window
+    window.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer.types.includes('text/uri-list') || e.dataTransfer.types.includes('text/plain')) {
+        dragCounter++;
+        dropOverlay.classList.add('active');
+      }
+    });
+    
+    window.addEventListener('dragleave', (e) => {
+      dragCounter--;
+      if (dragCounter === 0) {
+        dropOverlay.classList.remove('active');
+      }
+    });
+    
+    window.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     });
     
-    document.getElementById('editor-root').addEventListener('drop', async (e) => {
+    window.addEventListener('drop', async (e) => {
       e.preventDefault();
+      dragCounter = 0;
+      dropOverlay.classList.remove('active');
+      
       const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
       if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
         console.log('Dropped URL:', url);
-        // Fetch via HTTP VFS backend - dispatch event for Rust/WASM to handle
-        window.dispatchEvent(new CustomEvent('vfs-open-url', { detail: { url } }));
+        showToast('Loading: ' + url.substring(0, 50) + '...', 'info');
+        
+        try {
+          // Try direct fetch first (works for CORS-enabled URLs)
+          const response = await fetch(url);
+          if (response.ok) {
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('text') || contentType.includes('json') || contentType.includes('javascript')) {
+              const content = await response.text();
+              // Extract filename from URL
+              const filename = url.split('/').pop().split('?')[0] || 'dropped.txt';
+              // Dispatch event for WASM to create buffer
+              window.dispatchEvent(new CustomEvent('vfs-open-content', { 
+                detail: { name: filename, content, url } 
+              }));
+              showToast('Opened: ' + filename, 'success');
+            } else {
+              showToast('Unsupported content type: ' + contentType, 'error');
+            }
+          } else {
+            showToast('Failed to fetch URL: ' + response.status, 'error');
+          }
+        } catch (err) {
+          console.warn('Direct fetch failed:', err);
+          // Fallback: dispatch event for server-side fetch (CORS bypass)
+          window.dispatchEvent(new CustomEvent('vfs-open-url', { detail: { url } }));
+          showToast('Fetching via server...', 'info');
+        }
+        return;
       }
       
       // Handle dropped files
       const files = e.dataTransfer.files;
       if (files.length > 0) {
         const file = files[0];
-        const content = await file.text();
-        window.dispatchEvent(new CustomEvent('vfs-open-file', { 
-          detail: { name: file.name, content } 
-        }));
+        try {
+          const content = await file.text();
+          window.dispatchEvent(new CustomEvent('vfs-open-file', { 
+            detail: { name: file.name, content } 
+          }));
+          showToast('Opened: ' + file.name, 'success');
+        } catch (err) {
+          showToast('Failed to read file', 'error');
+        }
       }
     });
+
+    // === SESSION SHARING / VIEWER MODE ===
+    let currentSessionId = null;
+    let isViewerMode = false;
+    
+    // Detect if we're in viewer mode from URL
+    const viewParam = new URLSearchParams(window.location.search).get('view');
+    if (viewParam) {
+      isViewerMode = true;
+      document.getElementById('viewer-badge').classList.remove('hidden');
+      // Block keyboard input in viewer mode
+      document.getElementById('editor-root').style.pointerEvents = 'none';
+      console.log('[Viewer] Read-only mode for session:', viewParam);
+    }
+    
+    // Listen for session message from WebSocket (includes is_viewer flag)
+    window.addEventListener('session-connected', (e) => {
+      const { sessionId, isViewer } = e.detail;
+      currentSessionId = sessionId;
+      isViewerMode = isViewer;
+      
+      // Update session display
+      document.getElementById('drawer-session').textContent = `session: ${sessionId.substring(0, 8)}`;
+      
+      if (isViewer) {
+        document.getElementById('viewer-badge').classList.remove('hidden');
+        document.getElementById('share-btn').classList.add('hidden');
+        // Ensure input is blocked
+        document.getElementById('editor-root').style.pointerEvents = 'none';
+      } else {
+        document.getElementById('viewer-badge').classList.add('hidden');
+        document.getElementById('share-btn').classList.remove('hidden');
+        document.getElementById('editor-root').style.pointerEvents = 'auto';
+      }
+    });
+    
+    // Share button click handler
+    document.getElementById('share-btn').addEventListener('click', async () => {
+      if (!currentSessionId) {
+        showToast('No active session to share', 'error');
+        return;
+      }
+      
+      // Generate share URL with ?view= parameter
+      const shareUrl = `${window.location.origin}?view=${currentSessionId}`;
+      
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Share link copied!', 'success');
+      } catch (err) {
+        // Fallback: show URL in prompt
+        prompt('Copy this link to share:', shareUrl);
+      }
+    });
+    
+    // Export viewer mode state
+    window.isViewerMode = () => isViewerMode;
+    window.getSessionId = () => currentSessionId;
 
     // === IMAGE PREVIEW MODAL ===
     const imageModal = document.getElementById('image-preview-modal');
@@ -1284,6 +2173,377 @@
         hideImagePreview();
       }
     });
+
+    // === SETTINGS PANEL WIRING ===
+    const settingTheme = document.getElementById('setting-theme');
+    const settingFontsize = document.getElementById('setting-fontsize');
+    const settingFontsizeVal = document.getElementById('setting-fontsize-val');
+    const settingCursor = document.getElementById('setting-cursor');
+    const settingTabwidth = document.getElementById('setting-tabwidth');
+    const settingReset = document.getElementById('setting-reset');
+
+    // Load saved settings
+    function loadSettings() {
+      const theme = localStorage.getItem('nvim_theme') || 'dark';
+      const fontSize = localStorage.getItem('nvim_fontsize') || '14';
+      const cursor = localStorage.getItem('nvim_cursor') || 'block';
+      const tabWidth = localStorage.getItem('nvim_tabwidth') || '4';
+
+      settingTheme.value = theme;
+      settingFontsize.value = fontSize;
+      settingFontsizeVal.textContent = fontSize + 'px';
+      settingCursor.value = cursor;
+      settingTabwidth.value = tabWidth;
+
+      applySettings();
+    }
+
+    // Apply settings to UI
+    function applySettings() {
+      const theme = settingTheme.value;
+      const fontSize = settingFontsize.value;
+
+      // Apply theme
+      if (theme === 'light') {
+        document.body.style.background = '#f5f5f5';
+      } else {
+        document.body.style.background = '#1a1a1a';
+      }
+
+      // Apply font size to canvas (will require re-render)
+      document.documentElement.style.setProperty('--nvim-fontsize', fontSize + 'px');
+      
+      // Send settings to WASM if available
+      if (window.__nvim_ws && window.__nvim_ws.readyState === 1) {
+        // Could send Neovim commands for cursor style, tabwidth etc.
+        console.log('[Settings] Applied:', { theme, fontSize });
+      }
+    }
+
+    // Save and apply on change
+    settingTheme.addEventListener('change', () => {
+      localStorage.setItem('nvim_theme', settingTheme.value);
+      applySettings();
+      showToast('Theme applied', 'success');
+    });
+
+    settingFontsize.addEventListener('input', () => {
+      const val = settingFontsize.value;
+      settingFontsizeVal.textContent = val + 'px';
+      localStorage.setItem('nvim_fontsize', val);
+      applySettings();
+    });
+
+    settingCursor.addEventListener('change', () => {
+      localStorage.setItem('nvim_cursor', settingCursor.value);
+      showToast('Cursor style saved (restart for effect)', 'info');
+    });
+
+    settingTabwidth.addEventListener('change', () => {
+      localStorage.setItem('nvim_tabwidth', settingTabwidth.value);
+      showToast('Tab width saved', 'success');
+    });
+
+    settingReset.addEventListener('click', () => {
+      localStorage.removeItem('nvim_theme');
+      localStorage.removeItem('nvim_fontsize');
+      localStorage.removeItem('nvim_cursor');
+      localStorage.removeItem('nvim_tabwidth');
+      loadSettings();
+      showToast('Settings reset to defaults', 'success');
+    });
+
+    // Load on page start
+    loadSettings();
+
+    // === CONNECTIONS PANEL WIRING ===
+    const connAlias = document.getElementById('conn-alias');
+    const connType = document.getElementById('conn-type');
+    const connHost = document.getElementById('conn-host');
+    const connPassword = document.getElementById('conn-password');
+    const connTest = document.getElementById('conn-test');
+    const connAdd = document.getElementById('conn-add');
+    const connectionsList = document.getElementById('connections-list');
+
+    // Load saved connections from localStorage
+    function loadConnections() {
+      const saved = JSON.parse(localStorage.getItem('nvim_connections') || '[]');
+      renderConnections(saved);
+    }
+
+    // Render connections list
+    function renderConnections(connections) {
+      if (connections.length === 0) {
+        connectionsList.innerHTML = `
+          <div class="setting-item" style="justify-content:center; color:#636366;">
+            No saved connections
+          </div>`;
+        return;
+      }
+
+      connectionsList.innerHTML = connections.map((conn, idx) => `
+        <div class="setting-item conn-item" data-idx="${idx}">
+          <div class="conn-item-info">
+            <span class="conn-alias">${conn.alias}</span>
+            <span class="conn-host">${conn.type.toUpperCase()}: ${conn.host}</span>
+          </div>
+          <div class="conn-actions">
+            <button class="conn-btn" onclick="connectTo(${idx})">Connect</button>
+            <button class="conn-btn danger" onclick="deleteConnection(${idx})">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Add new connection
+    connAdd.addEventListener('click', () => {
+      const alias = connAlias.value.trim();
+      const type = connType.value;
+      const host = connHost.value.trim();
+      const password = connPassword.value;
+
+      if (!alias || !host) {
+        showToast('Alias and host are required', 'error');
+        return;
+      }
+
+      const connections = JSON.parse(localStorage.getItem('nvim_connections') || '[]');
+      
+      // Check for duplicate alias
+      if (connections.some(c => c.alias === alias)) {
+        showToast('Alias already exists', 'error');
+        return;
+      }
+
+      connections.push({ alias, type, host, password: password ? '***' : '' });
+      localStorage.setItem('nvim_connections', JSON.stringify(connections));
+      
+      // Clear form
+      connAlias.value = '';
+      connHost.value = '';
+      connPassword.value = '';
+      
+      renderConnections(connections);
+      showToast('Connection saved', 'success');
+    });
+
+    // Test connection
+    connTest.addEventListener('click', async () => {
+      const host = connHost.value.trim();
+      if (!host) {
+        showToast('Enter host to test', 'error');
+        return;
+      }
+      
+      showToast('Testing connection...', 'info');
+      
+      try {
+        const resp = await fetch('/api/ssh/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, password: connPassword.value })
+        });
+        
+        if (resp.ok) {
+          showToast('Connection successful!', 'success');
+        } else {
+          const err = await resp.text();
+          showToast('Connection failed: ' + err, 'error');
+        }
+      } catch (e) {
+        showToast('Test API not available', 'info');
+      }
+    });
+
+    // Delete connection
+    window.deleteConnection = function(idx) {
+      const connections = JSON.parse(localStorage.getItem('nvim_connections') || '[]');
+      connections.splice(idx, 1);
+      localStorage.setItem('nvim_connections', JSON.stringify(connections));
+      renderConnections(connections);
+      showToast('Connection removed', 'success');
+    };
+
+    // Connect to saved connection
+    window.connectTo = function(idx) {
+      const connections = JSON.parse(localStorage.getItem('nvim_connections') || '[]');
+      const conn = connections[idx];
+      if (!conn) return;
+      
+      // For now, create new session with VFS path hint
+      // In the future, this will set up the VFS backend
+      const vfsPath = `vfs://${conn.type}/${conn.host}`;
+      showToast('Opening: ' + conn.alias, 'info');
+      
+      // Could redirect to session with VFS parameter
+      // window.location.href = `?session=new&vfs=${encodeURIComponent(vfsPath)}`;
+      console.log('[Connect] Would open:', vfsPath);
+    };
+
+    // Load connections on page start
+    loadConnections();
+
+    // === DRAG-TO-SELECT TEXT ===
+    const selectionOverlay = document.getElementById('selection-overlay');
+    const nvimCanvas = document.getElementById('nvim');
+    let selecting = false;
+    let selectionStart = null;
+    let selectionEnd = null;
+    let cellWidth = 8.4;  // Default, updated by WASM
+    let cellHeight = 16.8; // Default, updated by WASM
+
+    // Get cell dimensions from WASM (called after init)
+    window.updateCellSize = function(w, h) {
+      cellWidth = w;
+      cellHeight = h;
+    };
+
+    // Convert mouse position to grid cell
+    function mouseToCell(e) {
+      const rect = nvimCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const col = Math.floor(x / cellWidth);
+      const row = Math.floor(y / cellHeight);
+      return { row, col };
+    }
+
+    // Draw selection rectangle
+    function drawSelection() {
+      selectionOverlay.innerHTML = '';
+      if (!selectionStart || !selectionEnd) return;
+
+      const startRow = Math.min(selectionStart.row, selectionEnd.row);
+      const endRow = Math.max(selectionStart.row, selectionEnd.row);
+      const startCol = Math.min(selectionStart.col, selectionEnd.col);
+      const endCol = Math.max(selectionStart.col, selectionEnd.col);
+
+      for (let row = startRow; row <= endRow; row++) {
+        const rect = document.createElement('div');
+        rect.className = 'selection-rect';
+        
+        // For first row, start at selection start col
+        // For last row, end at selection end col
+        // For middle rows, select full line
+        let rowStartCol = startCol;
+        let rowEndCol = endCol;
+        
+        if (startRow === endRow) {
+          // Single line selection
+          rowStartCol = startCol;
+          rowEndCol = endCol;
+        } else if (row === startRow) {
+          // First row of multi-line
+          rowStartCol = selectionStart.col < selectionEnd.col ? startCol : endCol;
+          rowEndCol = 999; // To end of line
+        } else if (row === endRow) {
+          // Last row of multi-line
+          rowStartCol = 0;
+          rowEndCol = selectionStart.col < selectionEnd.col ? endCol : startCol;
+        } else {
+          // Middle row - full line
+          rowStartCol = 0;
+          rowEndCol = 999;
+        }
+
+        rect.style.left = `${rowStartCol * cellWidth}px`;
+        rect.style.top = `${row * cellHeight}px`;
+        rect.style.width = `${(rowEndCol - rowStartCol + 1) * cellWidth}px`;
+        rect.style.height = `${cellHeight}px`;
+        selectionOverlay.appendChild(rect);
+      }
+    }
+
+    // Clear selection
+    function clearSelection() {
+      selectionStart = null;
+      selectionEnd = null;
+      selectionOverlay.innerHTML = '';
+      document.getElementById('editor-root').classList.remove('selecting');
+    }
+
+    // Get selected text from WASM grid state
+    function getSelectedText() {
+      if (!selectionStart || !selectionEnd) return '';
+      
+      // Request selection from WASM
+      const startRow = Math.min(selectionStart.row, selectionEnd.row);
+      const endRow = Math.max(selectionStart.row, selectionEnd.row);
+      const startCol = Math.min(selectionStart.col, selectionEnd.col);
+      const endCol = Math.max(selectionStart.col, selectionEnd.col);
+      
+      // Dispatch event for WASM to extract text
+      const result = { text: '' };
+      window.dispatchEvent(new CustomEvent('get-selection-text', { 
+        detail: { startRow, endRow, startCol, endCol, result } 
+      }));
+      return result.text;
+    }
+
+    // Mouse handlers
+    nvimCanvas.addEventListener('mousedown', (e) => {
+      // Right-click = context menu, not selection
+      if (e.button !== 0) return;
+      
+      // Shift+click extends selection
+      if (e.shiftKey && selectionStart) {
+        selectionEnd = mouseToCell(e);
+        drawSelection();
+        return;
+      }
+      
+      selecting = true;
+      selectionStart = mouseToCell(e);
+      selectionEnd = null;
+      document.getElementById('editor-root').classList.add('selecting');
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!selecting) return;
+      selectionEnd = mouseToCell(e);
+      drawSelection();
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!selecting) return;
+      selecting = false;
+      
+      if (selectionEnd && (selectionStart.row !== selectionEnd.row || selectionStart.col !== selectionEnd.col)) {
+        // Valid selection made
+        drawSelection();
+      } else {
+        // Just a click, clear selection
+        clearSelection();
+      }
+    });
+
+    // Copy selection on Ctrl+C / Cmd+C when text is selected
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectionStart && selectionEnd) {
+        // Get text from selection
+        const text = getSelectedText();
+        if (text) {
+          e.preventDefault();
+          navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied to clipboard', 'success');
+          }).catch(() => {
+            showToast('Copy failed', 'error');
+          });
+        }
+      }
+      
+      // Clear selection on Escape
+      if (e.key === 'Escape' && selectionStart) {
+        clearSelection();
+      }
+    });
+
+    // Clear selection when clicking outside or on keyboard input
+    document.getElementById('nvim-input').addEventListener('input', clearSelection);
+
+    // Export selection state
+    window.getSelection = () => ({ start: selectionStart, end: selectionEnd });
+    window.clearSelection = clearSelection;
 
     // Detect image files from dropped files/URLs
     window.addEventListener('vfs-open-file', (e) => {
@@ -1339,27 +2599,7 @@
     badge.textContent = savedBackend.toUpperCase();
     badge.className = 'drawer-item backend ' + savedBackend;
 
-    // Drawer toggle functionality
-    const drawer = document.getElementById('nvim-drawer');
-    const drawerBar = document.getElementById('drawer-bar');
-    const toggle = document.getElementById('drawer-toggle');
-
-    function toggleDrawer() {
-      drawer.classList.toggle('collapsed');
-      drawer.classList.toggle('expanded');
-    }
-
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleDrawer();
-    });
-
-    // Click on bar also toggles (except on toggle button)
-    drawerBar.addEventListener('click', (e) => {
-      if (e.target !== toggle) {
-        toggleDrawer();
-      }
-    });
+    // Note: Drawer toggle functionality is now in the failsafe sync script above
 
     // === WIDGET SYSTEM ===
     window.__widgets = {
@@ -1516,54 +2756,46 @@
       width: 1,
       _timer: null,
       _seconds: parseInt(localStorage.getItem('nvim_pomodoro_seconds') || '1500'),
-      _running: false,
       render() {
         const mins = Math.floor(this._seconds / 60);
         const secs = this._seconds % 60;
-        const display = `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
-        const btnText = this._running ? 'Pause' : 'Start';
         return `<div style="text-align:center;">
-          <div class="widget-clock" style="color:${this._seconds < 60 ? '#ff5555' : '#50fa7b'}">${display}</div>
-          <div style="margin-top:8px;display:flex;gap:6px;justify-content:center;">
-            <button class="pomo-toggle" style="padding:4px 12px;background:#3c3c3c;border:1px solid #4c4c4c;color:#ccc;border-radius:4px;cursor:pointer;">${btnText}</button>
-            <button class="pomo-reset" style="padding:4px 8px;background:#3c3c3c;border:1px solid #4c4c4c;color:#858585;border-radius:4px;cursor:pointer;">Reset</button>
+          <div style="font-size:24px;font-weight:bold;color:#50fa7b;">${mins}:${secs.toString().padStart(2, '0')}</div>
+          <div style="margin-top:8px;">
+            <button onclick="window.__widgets.get('pomodoro').toggle()" style="padding:4px 12px;border-radius:4px;border:none;background:#007AFF;color:#fff;cursor:pointer;">
+              ${this._timer ? 'Pause' : 'Start'}
+            </button>
+            <button onclick="window.__widgets.get('pomodoro').reset()" style="padding:4px 8px;border-radius:4px;border:1px solid #555;background:transparent;color:#858585;cursor:pointer;margin-left:4px;">
+              Reset
+            </button>
           </div>
         </div>`;
       },
-      init(el) {
-        const widget = this;
-        el.querySelector('.pomo-toggle').onclick = () => {
-          widget._running = !widget._running;
-          if (widget._running && !widget._timer) {
-            widget._timer = setInterval(() => {
-              if (widget._seconds > 0) {
-                widget._seconds--;
-                localStorage.setItem('nvim_pomodoro_seconds', widget._seconds);
-              } else {
-                widget._running = false;
-                clearInterval(widget._timer);
-                widget._timer = null;
-                // Play notification sound or show alert
-                if (Notification.permission === 'granted') {
-                  new Notification('Pomodoro Complete!', { body: 'Take a break!' });
-                }
-              }
+      toggle() {
+        if (this._timer) {
+          clearInterval(this._timer);
+          this._timer = null;
+        } else {
+          this._timer = setInterval(() => {
+            if (this._seconds > 0) {
+              this._seconds--;
+              localStorage.setItem('nvim_pomodoro_seconds', this._seconds);
               window.__widgets.update('pomodoro');
-            }, 1000);
-          } else if (!widget._running && widget._timer) {
-            clearInterval(widget._timer);
-            widget._timer = null;
-          }
-          window.__widgets.update('pomodoro');
-        };
-        el.querySelector('.pomo-reset').onclick = () => {
-          widget._running = false;
-          if (widget._timer) clearInterval(widget._timer);
-          widget._timer = null;
-          widget._seconds = 1500;
-          localStorage.setItem('nvim_pomodoro_seconds', '1500');
-          window.__widgets.update('pomodoro');
-        };
+            } else {
+              clearInterval(this._timer);
+              this._timer = null;
+              showToast('Pomodoro complete!', 'success');
+            }
+          }, 1000);
+        }
+        window.__widgets.update('pomodoro');
+      },
+      reset() {
+        if (this._timer) clearInterval(this._timer);
+        this._timer = null;
+        this._seconds = 1500;
+        localStorage.setItem('nvim_pomodoro_seconds', '1500');
+        window.__widgets.update('pomodoro');
       }
     });
     
@@ -1767,16 +2999,12 @@
     
     // Update default layout to include new widgets
     if (!localStorage.getItem('nvim_widget_layout')) {
-      window.__widgets._layout = ['actions', 'ssh', 'git', 'pomodoro', 'notes'];
+      window.__widgets._layout = ['actions', 'ssh', 'git', 'notes'];
     }
     
     // Initial render
     window.__widgets.render();
     
-    // Request notification permission for Pomodoro
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
 
     // Track dirty state for beforeunload warning
     let isDirty = false;
@@ -1867,6 +3095,16 @@
           el.style.display = 'none';
         }
       },
+      setRecording: (isRecording, register = 'q') => {
+        const indicator = document.getElementById('macro-indicator');
+        const regSpan = indicator?.querySelector('.macro-reg');
+        if (isRecording) {
+          indicator?.classList.remove('hidden');
+          if (regSpan) regSpan.textContent = `@${register}`;
+        } else {
+          indicator?.classList.add('hidden');
+        }
+      },
       setSession: (id, isReconnect = false) => {
         document.getElementById('drawer-session').textContent = 'session: ' + (id ? id.slice(0, 8) : '-');
         document.getElementById('drawer-session-id').textContent = id || '-';
@@ -1905,12 +3143,79 @@
       const menu = document.getElementById('nvim-context-menu');
       if (!menu) return;
 
+      const PASTE_HISTORY_KEY = 'nvim_paste_history';
+      const MAX_HISTORY = 10;
+
+      function getPasteHistory() {
+        try {
+          return JSON.parse(localStorage.getItem(PASTE_HISTORY_KEY) || '[]');
+        } catch { return []; }
+      }
+
+      function addToHistory(text) {
+        if (!text || text.length < 2) return;
+        let history = getPasteHistory();
+        // Remove duplicates
+        history = history.filter(h => h !== text);
+        // Add to front
+        history.unshift(text.substring(0, 100)); // Limit length
+        // Keep max entries
+        history = history.slice(0, MAX_HISTORY);
+        localStorage.setItem(PASTE_HISTORY_KEY, JSON.stringify(history));
+      }
+
+      function renderPasteHistory() {
+        const historyMenu = document.getElementById('paste-history-menu');
+        if (!historyMenu) return;
+        const history = getPasteHistory();
+        historyMenu.innerHTML = '';
+        if (history.length === 0) {
+          historyMenu.innerHTML = '<div class="menu-item paste-history-empty">No history</div>';
+        } else {
+          history.forEach((item, idx) => {
+            const preview = item.length > 30 ? item.substring(0, 30) + '...' : item;
+            const div = document.createElement('div');
+            div.className = 'menu-item paste-history-item';
+            div.textContent = preview.replace(/\n/g, ' ');
+            div.dataset.historyIndex = idx;
+            historyMenu.appendChild(div);
+          });
+        }
+      }
+
+      function pasteText(text) {
+        if (!text || !window.__nvim_input) return;
+        for (const char of text) {
+          if (char === '\n') {
+            window.__nvim_input('<CR>');
+          } else if (char === '<') {
+            window.__nvim_input('<lt>');
+          } else if (char === '\t') {
+            window.__nvim_input('<Tab>');
+          } else {
+            window.__nvim_input(char);
+          }
+        }
+      }
+
       // Handle menu item clicks
       menu.addEventListener('click', async function(e) {
         const item = e.target.closest('.menu-item');
         if (!item) return;
 
+        // Handle paste history item
+        if (item.classList.contains('paste-history-item')) {
+          const idx = parseInt(item.dataset.historyIndex);
+          const history = getPasteHistory();
+          if (history[idx]) {
+            pasteText(history[idx]);
+            hideContextMenu();
+          }
+          return;
+        }
+
         const action = item.dataset.action;
+        if (action === 'paste-history') return; // Don't close for submenu parent
         hideContextMenu();
 
         switch (action) {
@@ -1920,21 +3225,11 @@
             }
             break;
           case 'paste':
-            // Read clipboard and send to Neovim
             try {
               const text = await navigator.clipboard.readText();
-              if (text && window.__nvim_input) {
-                for (const char of text) {
-                  if (char === '\n') {
-                    window.__nvim_input('<CR>');
-                  } else if (char === '<') {
-                    window.__nvim_input('<lt>');
-                  } else if (char === '\t') {
-                    window.__nvim_input('<Tab>');
-                  } else {
-                    window.__nvim_input(char);
-                  }
-                }
+              if (text) {
+                addToHistory(text);
+                pasteText(text);
               }
             } catch (err) {
               console.warn('Clipboard read failed:', err);
@@ -1955,6 +3250,38 @@
         }
       });
 
+      // Render paste history when hovering submenu
+      const submenu = menu.querySelector('.menu-submenu');
+      if (submenu) {
+        submenu.addEventListener('mouseenter', renderPasteHistory);
+      }
+
+      // Show context menu on right-click
+      const editorRoot = document.getElementById('editor-root');
+      if (editorRoot) {
+        editorRoot.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+          
+          // Position menu at cursor
+          const menuWidth = 160;
+          const menuHeight = 180;
+          let x = e.clientX;
+          let y = e.clientY;
+          
+          // Keep menu within viewport
+          if (x + menuWidth > window.innerWidth) {
+            x = window.innerWidth - menuWidth - 8;
+          }
+          if (y + menuHeight > window.innerHeight) {
+            y = window.innerHeight - menuHeight - 8;
+          }
+          
+          menu.style.left = x + 'px';
+          menu.style.top = y + 'px';
+          menu.className = '';  // Remove 'hidden' class
+        });
+      }
+
       // Hide menu on click outside
       document.addEventListener('click', function(e) {
         if (!menu.contains(e.target)) {
@@ -1962,10 +3289,37 @@
         }
       });
 
-      // Hide menu on Escape
+      // Toggle diagnostics overlay function
+      function toggleDiagnostics() {
+        const overlay = document.getElementById('diagnostics-overlay');
+        const btn = document.getElementById('diag-toggle-btn');
+        if (overlay) {
+          const isHidden = overlay.classList.contains('hidden');
+          overlay.className = isHidden ? 'diagnostics-overlay' : 'diagnostics-overlay hidden';
+          if (btn) {
+            btn.classList.toggle('active', isHidden);
+          }
+        }
+      }
+
+      // FPS button click handler
+      const diagBtn = document.getElementById('diag-toggle-btn');
+      if (diagBtn) {
+        diagBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          toggleDiagnostics();
+        });
+      }
+
+      // Hide menu on Escape, Toggle diagnostics on F3 or Ctrl+Shift+D
       document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
           hideContextMenu();
+        }
+        // F3 (may not work on Mac) or Ctrl+Shift+D (universal)
+        if (e.key === 'F3' || (e.ctrlKey && e.shiftKey && e.key === 'D')) {
+          e.preventDefault();
+          toggleDiagnostics();
         }
       });
 

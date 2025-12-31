@@ -91,6 +91,35 @@ pub struct OpenToken {
     pub created_at: Instant,
     /// Whether the token has been used
     pub claimed: bool,
+    /// Token mode (single-use, shareable, snapshot)
+    pub mode: TokenMode,
+    /// Target file to open (relative to project root)
+    pub target_file: Option<String>,
+    /// Target line number
+    pub target_line: Option<u32>,
+    /// Custom expiration (overrides default TTL)
+    pub expires_at: Option<Instant>,
+    /// Maximum number of claims (for shareable links)
+    pub max_claims: Option<u32>,
+    /// Number of times this token has been claimed
+    pub claim_count: u32,
+}
+
+/// Token mode determines how the token can be used
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenMode {
+    /// Single-use token (current behavior)
+    SingleUse,
+    /// Shareable token with optional time limit
+    Share,
+    /// Snapshot token (reproducible state)
+    Snapshot,
+}
+
+impl Default for TokenMode {
+    fn default() -> Self {
+        Self::SingleUse
+    }
 }
 
 impl OpenToken {
@@ -99,12 +128,26 @@ impl OpenToken {
 
     /// Check if token is expired
     pub fn is_expired(&self) -> bool {
-        self.created_at.elapsed() > Self::TTL
+        if let Some(expires) = self.expires_at {
+            Instant::now() > expires
+        } else {
+            self.created_at.elapsed() > Self::TTL
+        }
     }
 
-    /// Check if token is valid (not expired, not claimed)
+    /// Check if token is valid (not expired, not claimed or shareable)
     pub fn is_valid(&self) -> bool {
-        !self.is_expired() && !self.claimed
+        if self.is_expired() {
+            return false;
+        }
+        match self.mode {
+            TokenMode::SingleUse => !self.claimed,
+            TokenMode::Share => {
+                // Check max claims if set
+                self.max_claims.map_or(true, |max| self.claim_count < max)
+            }
+            TokenMode::Snapshot => true, // Snapshots are always claimable
+        }
     }
 }
 
@@ -113,6 +156,11 @@ lazy_static::lazy_static! {
     static ref OPEN_TOKENS: RwLock<HashMap<String, OpenToken>> = RwLock::new(HashMap::new());
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Atomic counter for unique token generation
+static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Generate a secure random token
 pub fn generate_token() -> String {
     use std::time::SystemTime;
@@ -120,18 +168,40 @@ pub fn generate_token() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let random = u128::from(std::process::id()) ^ now;
+    let counter = TOKEN_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let random = u128::from(std::process::id()) ^ now ^ (u128::from(counter) << 64);
     format!("{random:x}")
 }
 
-/// Store a new open token
+/// Options for creating a magic link token
+#[derive(Debug, Clone, Default)]
+pub struct TokenOptions {
+    pub target_file: Option<String>,
+    pub target_line: Option<u32>,
+    pub mode: TokenMode,
+    pub duration: Option<Duration>,
+    pub max_claims: Option<u32>,
+}
+
+/// Store a new open token (simple version for backward compatibility)
 pub fn store_token(path: PathBuf, config: ProjectConfig) -> String {
+    store_token_with_options(path, config, TokenOptions::default())
+}
+
+/// Store a new open token with options
+pub fn store_token_with_options(path: PathBuf, config: ProjectConfig, options: TokenOptions) -> String {
     let token = generate_token();
     let open_token = OpenToken {
         path,
         config,
         created_at: Instant::now(),
         claimed: false,
+        mode: options.mode,
+        target_file: options.target_file,
+        target_line: options.target_line,
+        expires_at: options.duration.map(|d| Instant::now() + d),
+        max_claims: options.max_claims,
+        claim_count: 0,
     };
 
     // Clean up expired tokens first
@@ -146,11 +216,26 @@ pub fn store_token(path: PathBuf, config: ProjectConfig) -> String {
 
 /// Claim a token (marks as used, returns project info if valid)
 pub fn claim_token(token: &str) -> Option<(PathBuf, ProjectConfig)> {
+    claim_token_full(token).map(|(path, config, _, _)| (path, config))
+}
+
+/// Claim a token and return full info including deep link
+pub fn claim_token_full(token: &str) -> Option<(PathBuf, ProjectConfig, Option<String>, Option<u32>)> {
     if let Ok(mut tokens) = OPEN_TOKENS.write() {
         if let Some(open_token) = tokens.get_mut(token) {
             if open_token.is_valid() {
-                open_token.claimed = true;
-                return Some((open_token.path.clone(), open_token.config.clone()));
+                match open_token.mode {
+                    TokenMode::SingleUse => open_token.claimed = true,
+                    TokenMode::Share | TokenMode::Snapshot => {
+                        open_token.claim_count += 1;
+                    }
+                }
+                return Some((
+                    open_token.path.clone(),
+                    open_token.config.clone(),
+                    open_token.target_file.clone(),
+                    open_token.target_line,
+                ));
             }
         }
     }

@@ -27,7 +27,11 @@ it transports them faithfully.
 - Transport: WebSocket
 - Connection model: single persistent connection
 - Direction: bidirectional
+- Transport: WebSocket
+- Connection model: single persistent connection
+- Direction: bidirectional
 - Ordering: messages are processed in receive order
+- Rate Limiting: Token bucket algorithm (burst/refill) applied to incoming messages
 
 ## Encoding
 
@@ -137,6 +141,9 @@ Where:
 - `data`: binary data for write operations
 - `ok`: boolean success indicator
 - `result`: operation result or error message
+
+**Note on Large Files**:
+The current protocol version transports file contents as single binary blobs. Future versions will expose the internal `ReadHandle`/`WriteHandle` abstractions for chunked streaming to support large files (>10MB).
 
 ## Error Handling
 

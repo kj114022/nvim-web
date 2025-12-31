@@ -228,11 +228,7 @@ pub async fn handle_list_tree(
             format!("{}/{}", path.trim_end_matches('/'), name)
         };
 
-        let stat = backend.stat(&entry_path).await.unwrap_or(FileStat {
-            is_file: true,
-            is_dir: false,
-            size: 0,
-        });
+        let stat = backend.stat(&entry_path).await.unwrap_or(FileStat::file(0));
 
         let children = if stat.is_dir && depth > 0 {
             // Box::pin required for async recursion

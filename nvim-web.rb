@@ -5,9 +5,9 @@
 # 2. Or install directly: brew install --build-from-source ./nvim-web.rb
 
 class NvimWeb < Formula
-  desc "Neovim in the Browser - WebSocket bridge for browser-based Neovim"
-  homepage "https://github.com/your-username/nvim-web"
-  url "https://github.com/your-username/nvim-web/archive/refs/tags/v0.1.0.tar.gz"
+  desc "Neovim in the Browser - Real Neovim via WebSocket"
+  homepage "https://github.com/kj114022/nvim-web"
+  url "https://github.com/kj114022/nvim-web/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
   license "MIT"
 
@@ -15,31 +15,22 @@ class NvimWeb < Formula
   depends_on "neovim"
 
   def install
-    cd "host" do
-      system "cargo", "build", "--release"
-      bin.install "target/release/nvim-web-host" => "nvim-web"
-    end
-
-    # Install UI files
-    (share/"nvim-web/ui").install Dir["ui/*"]
-    
-    # Install plugin
-    (share/"nvim-web/plugin").install Dir["plugin/*"]
+    # Build from workspace root
+    system "cargo", "build", "--release", "-p", "nvim-web-host"
+    bin.install "target/release/nvim-web-host" => "nvim-web"
   end
 
   def caveats
     <<~EOS
-      To start nvim-web:
+      nvim-web is a single binary with all UI assets embedded.
+
+      To start the server:
         nvim-web
 
-      To serve the UI:
-        cd #{share}/nvim-web/ui && python3 -m http.server 8080
+      Then open http://localhost:8080 in your browser.
 
-      Then open http://localhost:8080
-
-      To install the Neovim plugin, add to your config:
-        vim.opt.runtimepath:append("#{share}/nvim-web/plugin")
-        require("nvim-web").setup()
+      To open a project directly:
+        nvim-web open /path/to/project
     EOS
   end
 

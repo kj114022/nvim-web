@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::{window, Window};
+use web_sys::window;
 use crate::dom::show_toast;
 
 /// Output of session initialization
@@ -9,16 +9,21 @@ pub struct SessionConfig {
 }
 
 /// Initialize session from URL params and `LocalStorage`
-///
-/// Handles:
-/// - Parsing ?session= and ?open=
-/// - Reconnecting to stored session
-/// - Cleaning URL parameters
-/// - Magic link token extraction
-pub fn init_session() -> Result<SessionConfig, JsValue> {
+/// Returns None if no session is active (Dashboard mode)
+pub fn init_session() -> Result<Option<SessionConfig>, JsValue> {
     let win = window().ok_or("No window found")?;
     let search = win.location().search().unwrap_or_default();
     let storage = win.local_storage().ok().flatten();
+    
+    // Get WS port from dynamic config
+    let ws_port = if let Ok(config) = js_sys::Reflect::get(&win, &"NVIM_CONFIG".into()) {
+         if let Ok(port) = js_sys::Reflect::get(&config, &"wsPort".into()) {
+             port.as_f64().unwrap_or(9001.0) as u16
+         } else { 9001 }
+    } else {
+        web_sys::console::warn_1(&"Config not found, defaulting to 9001".into());
+        9001
+    };
     
     // Parse ?session= from URL (handles both ?session=x and &session=x)
     let url_session: Option<String> = if search.contains("session=") {
@@ -48,25 +53,27 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
         show_toast("Opening project...");
     }
     
+    let base_ws = format!("ws://127.0.0.1:{ws_port}");
+
     // Determine session ID: URL param takes priority over localStorage
-    let (ws_url, should_clear_url) = match url_session {
+    let config = match url_session {
         Some(ref id) if id == "new" => {
             // Force new session - clear localStorage
             if let Some(ref s) = storage {
                 let _ = s.remove_item("nvim_session_id");
             }
             web_sys::console::log_1(&"SESSION: Forcing new session (URL param)".into());
-            ("ws://127.0.0.1:9001?session=new".to_string(), true)
+             Some((format!("{base_ws}?session=new"), true))
         }
         Some(ref id) => {
             // Join specific session from URL
             web_sys::console::log_1(&format!("SESSION: Joining session {id} (URL param)").into());
-            (format!("ws://127.0.0.1:9001?session={id}"), true)
+             Some((format!("{base_ws}?session={id}"), true))
         }
         None if open_token.is_some() => {
             // Magic link - always create new session
             web_sys::console::log_1(&"SESSION: Creating new session for magic link".into());
-            ("ws://127.0.0.1:9001?session=new".to_string(), true)
+             Some((format!("{base_ws}?session=new"), true))
         }
         None => {
             // No URL param, check localStorage
@@ -74,38 +81,32 @@ pub fn init_session() -> Result<SessionConfig, JsValue> {
                 .and_then(|s| s.get_item("nvim_session_id").ok())
                 .flatten();
             
-            existing_session.as_ref().map_or_else(
-                || {
-                    web_sys::console::log_1(&"SESSION: Creating new session".into());
-                    ("ws://127.0.0.1:9001?session=new".to_string(), false)
-                },
+            existing_session.as_ref().map_or(
+                None, // Show Dashboard instead of creating new
                 |id| {
                     web_sys::console::log_1(&format!("SESSION: Reconnecting to session {id}").into());
-                    (format!("ws://127.0.0.1:9001?session={id}"), false)
+                    Some((format!("{base_ws}?session={id}"), false))
                 },
             )
         }
     };
     
-    // Clean URL params if needed
-    if should_clear_url {
-        if let Ok(history) = win.history() {
-            let pathname = win.location().pathname().unwrap_or_default();
-            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&pathname));
+    if let Some((ws_url, should_clear_url)) = config {
+        // Clean URL params if needed
+        if should_clear_url {
+            if let Ok(history) = win.history() {
+                let pathname = win.location().pathname().unwrap_or_default();
+                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&pathname));
+            }
         }
+        
+        Ok(Some(SessionConfig {
+            ws_url,
+            open_token,
+        }))
+    } else {
+        Ok(None)
     }
-    
-    Ok(SessionConfig {
-        ws_url,
-        open_token,
-    })
 }
 
-/// Force new session (clears storage and connection info)
-#[allow(dead_code)]
-pub fn force_new_session(win: &Window) {
-    if let Some(storage) = win.local_storage().ok().flatten() {
-        let _ = storage.remove_item("nvim_session_id");
-    }
-    // Logic to reload page would go here if needed, or caller handles it
-}
+// NOTE: force_new_session removed - URL-based navigation used instead (?session=new)

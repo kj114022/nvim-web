@@ -9,6 +9,7 @@ end_of_line = lf
 indent_style = space
 insert_final_newline = true
 trim_trailing_whitespace = true
+max_line_length = 100
 
 [*.rs]
 indent_size = 4
@@ -16,7 +17,10 @@ indent_size = 4
 [*.{lua,luau}]
 indent_size = 2
 
-[*.{js,ts,json,html,css}]
+[*.{js,ts,json,css}]
+indent_size = 2
+
+[*.html]
 indent_size = 2
 
 [*.{md,markdown}]
@@ -25,5 +29,14 @@ trim_trailing_whitespace = false
 [*.toml]
 indent_size = 2
 
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.sh]
+indent_size = 2
+
 [Makefile]
 indent_style = tab
+
+[Cargo.lock]
+indent_size = 4

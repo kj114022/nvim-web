@@ -21,6 +21,7 @@ use crate::vfs::SshFsBackend;
 #[derive(Clone)]
 pub struct AppState {
     pub session_manager: Arc<RwLock<AsyncSessionManager>>,
+    pub ws_port: u16,
 }
 
 // SSH connection request
@@ -33,19 +34,24 @@ pub struct SshConnectRequest {
 }
 
 // Routes
-pub fn api_router(state: AppState) -> Router {
+pub fn api_router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health_check))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/count", get(session_count))
         .route("/sessions/:id", delete(delete_session))
+        .route("/sessions/:id/share", post(create_share_link))
+        .route("/sessions/:id/shares", get(list_share_links))
+        .route("/sessions/:id/snapshot", post(create_snapshot))
+        .route("/sessions/:id/snapshots", get(list_snapshots))
         .route("/open", post(open_project))
         .route("/claim/:token", get(claim_token))
         .route("/token/:token", get(get_token_info))
+        .route("/share/:token", get(use_share_link).delete(revoke_share_link))
+        .route("/snapshot/:id", get(get_snapshot).delete(delete_snapshot_handler))
         .route("/ssh/test", post(test_ssh_connection))
         .route("/ssh/connect", post(connect_ssh))
         .route("/ssh/disconnect", post(disconnect_ssh))
-        .with_state(state)
 }
 
 // Handlers
@@ -245,6 +251,97 @@ async fn disconnect_ssh(State(state): State<AppState>) -> impl IntoResponse {
         StatusCode::OK,
         Json(serde_json::json!({ "success": true })),
     )
+}
+
+// Share link handlers
+
+async fn create_share_link(
+    Path(session_id): Path<String>,
+    Json(options): Json<crate::sharing::ShareOptions>,
+) -> impl IntoResponse {
+    let link = crate::sharing::create_share_link(&session_id, options);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "token": link.token,
+            "session_id": link.session_id,
+            "max_uses": link.max_uses,
+            "read_only": link.read_only,
+            "url": format!("/?share={}", link.token)
+        })),
+    )
+}
+
+async fn list_share_links(Path(session_id): Path<String>) -> impl IntoResponse {
+    let links = crate::sharing::list_share_links(&session_id);
+    Json(serde_json::json!({ "links": links }))
+}
+
+async fn use_share_link(Path(token): Path<String>) -> impl IntoResponse {
+    match crate::sharing::use_share_link(&token) {
+        Some((session_id, read_only)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "session_id": session_id, "read_only": read_only })),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "share link invalid or expired" })),
+        ),
+    }
+}
+
+async fn revoke_share_link(Path(token): Path<String>) -> impl IntoResponse {
+    if crate::sharing::revoke_share_link(&token) {
+        Json(serde_json::json!({ "revoked": true }))
+    } else {
+        Json(serde_json::json!({ "error": "share link not found" }))
+    }
+}
+
+// Snapshot handlers
+
+#[derive(Deserialize)]
+struct SnapshotRequest {
+    cwd: Option<String>,
+    open_files: Option<Vec<String>>,
+    current_file: Option<String>,
+    cursor: Option<(String, u32, u32)>,
+    description: Option<String>,
+}
+
+async fn create_snapshot(
+    Path(session_id): Path<String>,
+    Json(payload): Json<SnapshotRequest>,
+) -> impl IntoResponse {
+    let snap = crate::sharing::create_snapshot(
+        &session_id,
+        std::path::PathBuf::from(payload.cwd.unwrap_or_default()),
+        payload.open_files.unwrap_or_default(),
+        payload.current_file,
+        payload.cursor,
+        payload.description,
+    );
+    Json(serde_json::json!({ "id": snap.id, "session_id": snap.session_id }))
+}
+
+async fn list_snapshots(Path(session_id): Path<String>) -> impl IntoResponse {
+    let snapshots = crate::sharing::list_snapshots(&session_id);
+    Json(serde_json::json!({ "snapshots": snapshots }))
+}
+
+async fn get_snapshot(Path(id): Path<String>) -> impl IntoResponse {
+    match crate::sharing::get_snapshot(&id) {
+        Some(snap) => (StatusCode::OK, Json(serde_json::to_value(snap).unwrap())),
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "not found" }))),
+    }
+}
+
+async fn delete_snapshot_handler(Path(id): Path<String>) -> impl IntoResponse {
+    if crate::sharing::delete_snapshot(&id) {
+        Json(serde_json::json!({ "deleted": true }))
+    } else {
+        Json(serde_json::json!({ "error": "not found" }))
+    }
 }
 
 // Deprecated entry point kept for signature compatibility if needed, but unused

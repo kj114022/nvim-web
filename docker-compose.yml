@@ -1,0 +1,34 @@
+# Development environment with SSH test server
+version: '3.8'
+
+services:
+  # Main nvim-web server
+  nvim-web:
+    build: .
+    ports:
+      - "8080:8080"
+      - "9001:9001"
+    volumes:
+      - .:/workspace:ro
+    working_dir: /workspace
+
+  # SSH test server for VFS integration tests
+  ssh-test:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: nvim-web-ssh-test
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=testpass
+      - USER_NAME=testuser
+    volumes:
+      - ./tests/fixtures:/config/workspace:ro
+    ports:
+      - "2222:2222"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2222"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

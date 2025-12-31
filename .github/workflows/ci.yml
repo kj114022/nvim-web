@@ -2,16 +2,27 @@ name: CI
 
 on:
   push:
+    branches: [main, master]
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  # Main test job
   test:
+    name: Test (${{ matrix.os }}, nvim-${{ matrix.neovim }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        neovim: [stable]
+        include:
+          - os: ubuntu-latest
+            neovim: nightly
 
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.neovim == 'nightly' }}
 
     steps:
       - name: Checkout
@@ -20,16 +31,25 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Neovim (Linux)
-        if: runner.os == 'Linux'
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Neovim (Linux stable)
+        if: runner.os == 'Linux' && matrix.neovim == 'stable'
         run: |
           sudo apt update
           sudo apt install -y neovim
 
+      - name: Install Neovim (Linux nightly)
+        if: runner.os == 'Linux' && matrix.neovim == 'nightly'
+        run: |
+          curl -LO https://github.com/neovim/neovim/releases/download/nightly/nvim-linux64.tar.gz
+          tar xzf nvim-linux64.tar.gz
+          echo "$PWD/nvim-linux64/bin" >> $GITHUB_PATH
+
       - name: Install Neovim (macOS)
         if: runner.os == 'macOS'
-        run: |
-          brew install neovim
+        run: brew install neovim
 
       - name: Show versions
         run: |
@@ -39,6 +59,127 @@ jobs:
 
       - name: Run tests
         env:
-          # Explicitly disable SSH tests
           NVIM_WEB_TEST_SSH: "0"
         run: cargo test
+
+      - name: Build release
+        run: cargo build --release -p nvim-web-host
+
+  # SSH integration tests (Linux only with Docker)
+  ssh-test:
+    name: SSH Integration Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      sshd:
+        image: lscr.io/linuxserver/openssh-server:latest
+        env:
+          PUID: 1000
+          PGID: 1000
+          PASSWORD_ACCESS: "true"
+          USER_PASSWORD: testpass
+          USER_NAME: testuser
+        ports:
+          - 2222:2222
+        options: >-
+          --health-cmd "nc -z localhost 2222"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Neovim
+        run: |
+          sudo apt update
+          sudo apt install -y neovim
+
+      - name: Wait for SSH
+        run: |
+          for i in {1..30}; do
+            nc -z localhost 2222 && break
+            echo "Waiting for SSH..."
+            sleep 2
+          done
+
+      - name: Run SSH tests
+        env:
+          NVIM_WEB_TEST_SSH: "1"
+          NVIM_WEB_SSH_HOST: localhost
+          NVIM_WEB_SSH_PORT: "2222"
+          NVIM_WEB_SSH_USER: testuser
+          NVIM_WEB_SSH_PASS: testpass
+        run: cargo test -p nvim-web-vfs ssh --features ssh-test
+
+  # WASM build verification
+  wasm:
+    name: WASM Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          cd crates/ui
+          wasm-pack build --target web
+
+  # Release artifacts (on push to main only)
+  release:
+    name: Build Release Artifacts
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, wasm]
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: nvim-web-host
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: nvim-web-host
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Neovim
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt update && sudo apt install -y neovim
+          else
+            brew install neovim
+          fi
+        shell: bash
+
+      - name: Build release
+        run: cargo build --release -p nvim-web-host
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ matrix.target }}
+          path: target/release/${{ matrix.artifact }}
+

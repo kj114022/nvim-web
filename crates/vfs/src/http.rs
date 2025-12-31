@@ -112,6 +112,9 @@ impl VfsBackend for HttpFsBackend {
             is_file: true,
             is_dir: false,
             size,
+            created: None,
+            modified: None,
+            readonly: true, // HTTP is read-only
         })
     }
 

@@ -368,6 +368,11 @@ impl VfsBackend for SshFsBackend {
             is_file: stat.is_file(),
             is_dir: stat.is_dir(),
             size: stat.size.unwrap_or(0),
+            created: None, // SFTP doesn't provide creation time
+            modified: stat.mtime.map(|t| {
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)
+            }),
+            readonly: false,
         })
     }
 

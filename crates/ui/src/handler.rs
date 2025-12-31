@@ -9,7 +9,7 @@ use crate::grid::GridManager;
 use crate::highlight::HighlightMap;
 
 use crate::render::RenderState;
-use crate::dom::{update_drawer_session, update_drawer_cwd_info};
+use crate::dom::{update_drawer_session, update_drawer_cwd_info, show_macro_recording, hide_macro_recording};
 use crate::opfs::js_handle_fs_request;
 use crate::events::apply_redraw;
 
@@ -56,6 +56,20 @@ pub async fn handle_message(
                 // Cwd Info Push: ["cwd_info", {...}]
                 if method.as_str() == Some("cwd_info") {
                     handle_cwd_info_push(arr);
+                    return;
+                }
+                
+                // Macro Recording Start: ["recording_start", register]
+                if method.as_str() == Some("recording_start") {
+                    if let Some(register) = arr.get(1).and_then(|v| v.as_str()) {
+                        show_macro_recording(register);
+                    }
+                    return;
+                }
+                
+                // Macro Recording Stop: ["recording_stop"]
+                if method.as_str() == Some("recording_stop") {
+                    hide_macro_recording();
                     return;
                 }
             }
@@ -182,8 +196,13 @@ fn handle_rpc_response(arr: &[Value]) {
 fn handle_session_message(arr: &[Value], ws: &WebSocket) {
     if let Value::String(ref session_id) = arr[1] {
         if let Some(id) = session_id.as_str() {
-             // Reconnection logic
-             let is_reconnection = if let Ok(Some(storage)) = window().unwrap().local_storage() {
+            // Parse is_viewer flag (third element, default false)
+            let is_viewer = arr.get(2)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            
+            // Reconnection logic
+            let is_reconnection = if let Ok(Some(storage)) = window().unwrap().local_storage() {
                 let existing = storage.get_item("nvim_session_id").ok().flatten();
                 let is_recon = existing.as_ref().is_some_and(|e| e == id);
                 let _ = storage.set_item("nvim_session_id", id);
@@ -192,16 +211,32 @@ fn handle_session_message(arr: &[Value], ws: &WebSocket) {
             
             update_drawer_session(id, is_reconnection);
             
-            // Request CWD info (ID 2)
-            let cwd_req = Value::Array(vec![
-                Value::Integer(0.into()),
-                Value::Integer(2.into()),
-                Value::String("get_cwd_info".into()),
-                Value::Array(vec![]),
-            ]);
-            let mut bytes = Vec::new();
-            if rmpv::encode::write_value(&mut bytes, &cwd_req).is_ok() {
-                let _ = ws.send_with_u8_array(&bytes);
+            // Dispatch session-connected event to JavaScript
+            if let Some(win) = window() {
+                let detail = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&detail, &"sessionId".into(), &id.into());
+                let _ = js_sys::Reflect::set(&detail, &"isViewer".into(), &is_viewer.into());
+                
+                let event_init = web_sys::CustomEventInit::new();
+                event_init.set_detail(&detail);
+                
+                if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("session-connected", &event_init) {
+                    let _ = win.dispatch_event(&event);
+                }
+            }
+            
+            // Request CWD info only if not viewer (viewers don't need to modify)
+            if !is_viewer {
+                let cwd_req = Value::Array(vec![
+                    Value::Integer(0.into()),
+                    Value::Integer(2.into()),
+                    Value::String("get_cwd_info".into()),
+                    Value::Array(vec![]),
+                ]);
+                let mut bytes = Vec::new();
+                if rmpv::encode::write_value(&mut bytes, &cwd_req).is_ok() {
+                    let _ = ws.send_with_u8_array(&bytes);
+                }
             }
         }
     }

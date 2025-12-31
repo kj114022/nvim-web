@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use nvim_web_host::session::AsyncSessionManager;
 use nvim_web_host::ws::serve_multi_async;
+use nvim_web_vfs::VfsManager;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
@@ -9,7 +10,8 @@ use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 #[tokio::test]
 async fn test_origin_validation() {
     // Start server in background
-    let manager = Arc::new(RwLock::new(AsyncSessionManager::new()));
+    let vfs_manager = Arc::new(RwLock::new(VfsManager::new()));
+    let manager = Arc::new(RwLock::new(AsyncSessionManager::new(vfs_manager)));
 
     // Check if port 9003 is available, if not, skip test or fail gracefully
     if TcpStream::connect("127.0.0.1:9003").await.is_ok() {

@@ -10,6 +10,7 @@ crates/ui/pkg/
 
 # macOS
 .DS_Store
+**/.DS_Store
 
 # IDE
 .idea/
@@ -18,7 +19,7 @@ crates/ui/pkg/
 *.swo
 *~
 
-# Environment
+# Environment and local config
 .env
 .env.local
 config.toml
@@ -29,3 +30,21 @@ config.toml
 
 # Generated files
 *.generated.*
+
+# Test artifacts
+*.profraw
+lcov.info
+
+# Backup files
+*.bak
+*.orig
+
+# Node modules (if any tooling uses npm)
+node_modules/
+
+# OS-specific
+Thumbs.db
+Desktop.ini
+
+# Gemini/AI artifacts (local development only)
+.gemini/
