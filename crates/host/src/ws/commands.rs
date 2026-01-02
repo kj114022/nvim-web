@@ -315,9 +315,15 @@ async fn handle_notification(
     if let Value::String(method) = &arr[1] {
         if method.as_str() == Some("clipboard_read_response") {
             if let Value::Array(params) = &arr[2] {
-                if params.len() >= 2 {
+                if params.len() >= 3 {
                     let req_id = u32::try_from(params[0].as_u64().unwrap_or(0)).unwrap_or(0);
                     let content = &params[1];
+                    let response_session_id = params[2].as_str();
+
+                    if response_session_id != Some(session_id) {
+                         tracing::warn!(expected = %session_id, got = ?response_session_id, "Blocked clipboard response from wrong session");
+                         return Ok(None);
+                    }
 
                     let mgr = manager.read().await;
                     if let Some(session) = mgr.get_session(session_id) {

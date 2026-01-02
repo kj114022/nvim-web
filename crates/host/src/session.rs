@@ -15,18 +15,17 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, RwLock as TokioRwLock};
 
 use nvim_web_vfs::VfsManager;
+use crate::context::ContextManager;
 
 /// Unique session identifier
 pub type SessionId = String;
 
-/// Generate a new unique session ID
+/// Generate a new unique session ID using UUID v4
+///
+/// UUIDs provide cryptographically secure, unpredictable identifiers
+/// that prevent session hijacking through ID guessing.
 pub fn generate_session_id() -> SessionId {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("{now:x}")
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The writer type used by nvim-rs with tokio
@@ -38,6 +37,20 @@ use tokio::sync::oneshot;
 
 /// Map of pending request IDs to their response/completion channels
 pub type RequestMap = Arc<Mutex<HashMap<u32, oneshot::Sender<Value>>>>;
+
+/// Generate a unique request ID that doesn't collide with existing entries
+///
+/// Uses retry logic to handle the (rare) birthday paradox collision case.
+/// This prevents data corruption when two requests get the same ID.
+fn generate_unique_request_id(map: &std::sync::MutexGuard<HashMap<u32, oneshot::Sender<Value>>>) -> u32 {
+    loop {
+        let req_id = rand::random::<u32>();
+        if !map.contains_key(&req_id) {
+            return req_id;
+        }
+        // Collision detected - extremely rare, retry
+    }
+}
 
 /// Handler for Neovim notifications - forwards redraw events to broadcast channel
 #[derive(Clone)]
@@ -77,8 +90,11 @@ impl Handler for RedrawHandler {
     ) -> Result<Value, Value> {
         if name == "clipboard_read" {
             // Args: [regtype] (unneeded for browser usually, but good to have)
-            // Generate request ID
-            let req_id = rand::random::<u32>(); // Simple random ID
+            // Generate collision-safe request ID
+            let req_id = {
+                let map = self.requests.lock().unwrap();
+                generate_unique_request_id(&map)
+            };
 
             // Create channel
             let (tx, rx) = oneshot::channel();
@@ -90,12 +106,15 @@ impl Handler for RedrawHandler {
             }
 
             // Send request to browser
-            // Format: [2, "clipboard_read", [req_id]]
+            // Format: [2, "clipboard_read", [req_id, session_id]]
             // Using Type 2 (Notification) mechanism with specific method
             let msg = Value::Array(vec![
                 Value::Integer(2.into()),
                 Value::String("clipboard_read".into()),
-                Value::Array(vec![Value::Integer(req_id.into())]),
+                Value::Array(vec![
+                    Value::Integer(req_id.into()),
+                    Value::String(self.session_id.clone().into()),
+                ]),
             ]);
 
             let mut bytes = Vec::new();
@@ -166,6 +185,35 @@ impl Handler for RedrawHandler {
                     return Err(Value::String(format!("VFS write error: {e}").into()));
                 }
             }
+        }
+
+        if name == "vfs_delete" {
+             let path = args.first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Value::String("vfs_delete requires path argument".into()))?;
+
+             // Call handler
+             let vfs = self.vfs_manager.read().await;
+             
+             // Logic extracted from vfs_handlers::handle_delete_vfs:
+             let uri = url::Url::parse(path).map_err(|e| Value::String(format!("Invalid URI: {e}").into()))?;
+             let scheme = uri.scheme();
+             
+             if let Ok(backend) = vfs.get_backend(scheme).await {
+                  let p = if scheme == "file" || scheme == "local" || scheme == "ssh" || scheme == "browser" {
+                      uri.path().to_string()
+                  } else {
+                      uri.path().to_string()
+                  };
+                  
+                  // Use async_ops directly
+                  match crate::vfs::async_ops::remove_dir_all(backend.as_ref(), &p).await {
+                      Ok(_) => return Ok(Value::Boolean(true)),
+                      Err(e) => return Err(Value::String(format!("Delete failed: {e}").into())),
+                  }
+             } else {
+                 return Err(Value::String(format!("Backend not found: {scheme}").into()));
+             }
         }
 
         Err(Value::String(format!("Unknown request: {name}").into()))
@@ -271,6 +319,7 @@ pub struct AsyncSession {
     pub last_active: Instant,
     pub connected: bool,
     pub requests: RequestMap,
+    pub context_manager: Option<crate::context::ContextManager>,
 }
 
 // Helper: Execute multi-line VimL via nvim_exec2
@@ -289,7 +338,7 @@ async fn exec_viml(nvim: &Neovim<NvimWriter>, script: &str) -> Result<()> {
 impl AsyncSession {
     /// Create a new session with a freshly spawned Neovim instance
     #[allow(clippy::too_many_lines)]
-    pub async fn new(vfs_manager: Arc<TokioRwLock<VfsManager>>) -> Result<Self> {
+    pub async fn new(vfs_manager: Arc<TokioRwLock<VfsManager>>, context: Option<String>) -> Result<Self> {
         let id = generate_session_id();
         let id_for_log = id.clone();
 
@@ -440,6 +489,28 @@ augroup END
 "#;
         let _ = exec_viml(&nvim, recording_sync).await;
 
+        // Apply Context-Aware Configuration
+        let mut context_manager = None;
+        if let Some(ctx_url) = context {
+            eprintln!("SESSION: Configuring for context {ctx_url}");
+            let cm = ContextManager::new();
+            let config = cm.get_config(&ctx_url);
+            
+            // Apply settings via Neovim commands
+            // 1. Filetype
+            let _ = nvim.command(&format!("set filetype={}", config.filetype)).await;
+            
+            // 2. Cmdline mode (Firenvim vs Neovim)
+            // If firenvim mode, we might want to hide safe statusline or change behavior
+            if config.cmdline == "firenvim" {
+                let _ = nvim.command("set laststatus=0").await;
+                let _ = nvim.command("set showtabline=0").await;
+                let _ = nvim.command("set noruler").await;
+            }
+            
+            context_manager = Some(cm);
+        }
+
         eprintln!("SESSION: Created new async session {id}");
 
         let now = Instant::now();
@@ -452,6 +523,7 @@ augroup END
             connected: false,
             connections: 0,
             requests,
+            context_manager,
         })
     }
 
@@ -532,8 +604,8 @@ impl AsyncSessionManager {
     }
 
     /// Create a new session and return its ID
-    pub async fn create_session(&mut self) -> Result<SessionId> {
-        let session = AsyncSession::new(self.vfs_manager.clone()).await?;
+    pub async fn create_session(&mut self, context: Option<String>) -> Result<SessionId> {
+        let session = AsyncSession::new(self.vfs_manager.clone(), context).await?;
         let id = session.id.clone();
         self.sessions.insert(id.clone(), session);
         Ok(id)

@@ -33,6 +33,14 @@ pub async fn handle_message(
                         handle_fs_request(arr, request_id, ws).await;
                         return;
                     }
+
+                    // Check for Clipboard Read Notification
+                    if let Value::String(ref method) = arr[1] {
+                        if method.as_str() == Some("clipboard_read") {
+                            handle_clipboard_read(arr, &ws).await;
+                            return;
+                        }
+                    }
                 }
                 
                 // Type 1: RPC Response
@@ -265,5 +273,56 @@ fn process_cwd_info(val: &Value) {
             }
         }
         update_drawer_cwd_info(&cwd, &file, &backend, git_branch.as_deref());
+    }
+}
+
+async fn handle_clipboard_read(arr: &[Value], ws: &WebSocket) {
+    if let Value::Array(params) = &arr[2] {
+        if params.len() >= 2 {
+            let req_id = params[0].as_u64().unwrap_or(0) as u32;
+            let session_id = params[1].as_str().unwrap_or("");
+            
+            if let Some(win) = window() {
+                // Verify Session ID Matches Current Connection
+                if let Ok(Some(storage)) = win.local_storage() {
+                     if let Ok(Some(stored_id)) = storage.get_item("nvim_session_id") {
+                         if stored_id != session_id {
+                             web_sys::console::warn_1(&"Clipboard request session ID mismatch".into());
+                             return;
+                         }
+                     }
+                }
+
+                let nav = win.navigator();
+                // Note: Rust definition implies always present, but in JS it might be missing in insecure contexts.
+                // However, we must match the type signature.
+                let clipboard = nav.clipboard();
+                
+                 let promise = clipboard.read_text();
+                 match wasm_bindgen_futures::JsFuture::from(promise).await {
+                     Ok(text_val) => {
+                         if let Some(text) = text_val.as_string() {
+                             // Response: [2, "clipboard_read_response", [req_id, text, session_id]]
+                             let msg = Value::Array(vec![
+                                 Value::Integer(2.into()),
+                                 Value::String("clipboard_read_response".into()),
+                                 Value::Array(vec![
+                                     Value::Integer((req_id as i64).into()),
+                                     Value::String(text.into()),
+                                     Value::String(session_id.into())
+                                 ])
+                             ]);
+                             let mut bytes = Vec::new();
+                             if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                                 let _ = ws.send_with_u8_array(&bytes);
+                             }
+                         }
+                     },
+                     Err(e) => {
+                         web_sys::console::warn_1(&format!("Clipboard read failed: {:?}", e).into());
+                     }
+                 }
+            }
+        }
     }
 }
