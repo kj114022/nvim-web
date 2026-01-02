@@ -27,9 +27,6 @@ it transports them faithfully.
 - Transport: WebSocket
 - Connection model: single persistent connection
 - Direction: bidirectional
-- Transport: WebSocket
-- Connection model: single persistent connection
-- Direction: bidirectional
 - Ordering: messages are processed in receive order
 - Rate Limiting: Token bucket algorithm (burst/refill) applied to incoming messages
 
