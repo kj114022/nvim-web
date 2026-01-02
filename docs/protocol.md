@@ -37,30 +37,39 @@ it transports them faithfully.
 - Binary payloads (e.g. file contents) are sent as MessagePack binary objects
 
 ## Message Envelope
-
-All protocol messages are MessagePack-encoded arrays with a type identifier as the first element:
-
-```
-[type, ...payload]
-```
-
-Where:
-- `type` (integer): message type identifier
-  - `0`: RPC request
-  - `1`: RPC response  
-  - `2`: FS request
-  - `3`: FS response
-  - Redraw events: raw Neovim notification arrays
-- `payload`: message-specific data (varies by type)
-
-The presence of a message `id` in requests indicates a request/response pair. Messages without `id` are fire-and-forget.
-
-## Message Categories
-
-### Redraw
-
-Direction: Host → UI  
-Source: Neovim `redraw` notifications
+ 
+ Protocol messages are MessagePack-encoded arrays. The first element determines the message category:
+ 
+ ### Standard Envelope
+ ```
+ [type_id, ...payload]
+ ```
+ 
+ - `type_id` (integer):
+   - `0`: RPC request
+   - `1`: RPC response
+   - `2`: Notification (if 2nd element is string) OR FS Request (if 2nd element is integer)
+   - `3`: FS response
+ 
+ ### Input Envelope (Legacy/Short-circuit)
+ ```
+ [method_name, ...args]
+ ```
+ 
+ - `method_name` (string):
+   - `"input"`: Keyboard input
+   - `"resize"`: Grid resize
+   - `"input_mouse"`: Mouse events
+ 
+ The presence of a message `id` in requests indicates a request/response pair. Messages without `id` are fire-and-forget.
+ 
+ ## Message Categories
+ 
+ ### Redraw (Notification)
+ 
+ Direction: Host → UI
+ Type: 2 (Notification)
+ Source: Neovim `redraw` notifications
 
 Payload:
 - Raw redraw event arrays as produced by Neovim
@@ -72,32 +81,27 @@ Format:
 ```
 
 ### Input
-
-Direction: UI → Host
-
-Purpose:
-- Forward user input (keys, mouse, resize) to Neovim
-
-Payload:
-- Input events encoded in Neovim-compatible form
-
-Format:
-```
-[method_name, ...args]
-```
-
-Examples:
-- `["nvim_input", "<key>"]`
-- `["nvim_ui_try_resize", cols, rows]`
-
-### RPC Responses
-
-Direction: Bidirectional  
-Request/response: Yes (`id` required)
-
-Used for:
-- Synchronous Neovim RPC calls
-- Blocking host-side operations
+ 
+ Direction: UI → Host
+ 
+ Format:
+ ```
+ [method_name, ...args]
+ ```
+ 
+ Examples:
+ - `["input", "<C-s>"]`
+ - `["resize", 80, 24]`
+ - `["input_mouse", "left", "press", "", 0, 10, 5]`
+ 
+ ### RPC Responses
+ 
+ Direction: Bidirectional
+ Request/response: Yes (`id` required)
+ 
+ Used for:
+ - Synchronous Neovim RPC calls
+ - Blocking host-side operations
 
 Semantics:
 - Exactly one response per request
