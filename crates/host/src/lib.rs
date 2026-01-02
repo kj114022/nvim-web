@@ -12,6 +12,7 @@ pub mod vfs_handlers;
 
 // Configuration
 pub mod config;
+pub mod context;
 
 // SSH tunnel management
 pub mod tunnel;

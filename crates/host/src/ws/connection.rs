@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::{
 use crate::session::AsyncSessionManager;
 use crate::vfs::{FsRequestRegistry, VfsManager};
 
-use super::protocol::{parse_session_id_from_uri, parse_view_id_from_uri, validate_origin};
+use super::protocol::{parse_session_id_from_uri, parse_view_id_from_uri, parse_context_from_uri, validate_origin};
 use super::commands::handle_browser_message;
 use super::rate_limit::RateLimiter;
 
@@ -30,6 +30,7 @@ pub struct ConnectionInfo {
     pub origin: Option<String>,
     pub origin_valid: bool,
     pub is_viewer: bool,
+    pub context: Option<String>,
 }
 
 /// Handle a single WebSocket connection
@@ -61,6 +62,9 @@ pub async fn handle_connection(
         } else {
             info.session_id = parse_session_id_from_uri(&uri);
         }
+        
+        // Extract context (URL)
+        info.context = parse_context_from_uri(&uri);
 
         // Extract and validate origin
         if let Some(origin) = req.headers().get("origin") {
@@ -122,10 +126,10 @@ pub async fn handle_connection(
                     }
                     existing_id.clone()
                 } else {
-                    create_new_session(&mut mgr).await?
+                    create_new_session(&mut mgr, info.context.clone()).await?
                 }
             } else {
-                create_new_session(&mut mgr).await?
+                create_new_session(&mut mgr, info.context.clone()).await?
             }
         };
         (session_id, false)
@@ -162,6 +166,10 @@ pub async fn handle_connection(
     // Rate limiter: 1000 burst, 100/sec sustained
     let mut rate_limiter = RateLimiter::default_ws();
 
+    // Track last lag recovery time for debouncing
+    let mut last_lag_recovery = std::time::Instant::now();
+    const LAG_RECOVERY_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
+
     loop {
         tokio::select! {
             // Forward redraws to browser
@@ -173,8 +181,30 @@ pub async fn handle_connection(
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_n)) => {
-                        // Lagged messages - normal under load
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        // Messages were dropped - UI is now out of sync
+                        tracing::warn!(
+                            session_id = %session_id_clone,
+                            dropped_messages = n,
+                            "Redraw messages lagged, requesting full resync"
+                        );
+                        
+                        // Debounce redraw requests to avoid flooding
+                        if last_lag_recovery.elapsed() >= LAG_RECOVERY_DEBOUNCE {
+                            last_lag_recovery = std::time::Instant::now();
+                            
+                            // Request full redraw to resync UI
+                            let mgr = manager_clone.read().await;
+                            if let Some(session) = mgr.get_session(&session_id_clone) {
+                                if let Err(e) = session.request_redraw().await {
+                                    tracing::error!(
+                                        session_id = %session_id_clone,
+                                        error = %e,
+                                        "Failed to request redraw after lag"
+                                    );
+                                }
+                            }
+                        }
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         break;
@@ -258,8 +288,8 @@ pub async fn handle_connection(
 }
 
 /// Helper to create a new session
-pub async fn create_new_session(mgr: &mut AsyncSessionManager) -> Result<String> {
-    match mgr.create_session().await {
+pub async fn create_new_session(mgr: &mut AsyncSessionManager, context: Option<String>) -> Result<String> {
+    match mgr.create_session(context).await {
         Ok(id) => {
             if let Some(session) = mgr.get_session_mut(&id) {
                 session.connected = true;
