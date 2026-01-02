@@ -23,6 +23,8 @@ fn rgb_to_css(rgb: u32) -> String {
 
 // NOTE: CursorState and ease_out_quad removed - cursor animation handled by draw_all now
 
+use crate::components::vfx::{CursorVfx, ParticleTrail, TrailMode};
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct Renderer {
@@ -35,7 +37,8 @@ pub struct Renderer {
     // Color caches to avoid per-cell allocations
     cached_fg: Rc<RefCell<Option<(u32, String)>>>,
     cached_bg: Rc<RefCell<Option<(u32, String)>>>,
-    // NOTE: cursor_state removed - cursor blinking handled by draw_all now
+    // VFX
+    pub cursor_vfx: Rc<RefCell<Box<dyn CursorVfx>>>,
 }
 
 impl Renderer {
@@ -84,6 +87,7 @@ impl Renderer {
             dpr,
             cached_fg: Rc::new(RefCell::new(None)),
             cached_bg: Rc::new(RefCell::new(None)),
+            cursor_vfx: Rc::new(RefCell::new(Box::new(ParticleTrail::new(TrailMode::Railgun)))),
         }
     }
 
@@ -166,6 +170,15 @@ impl Renderer {
             let offset_y = (grid.row_offset as f64) * self.cell_h;
             let cursor_x = (grid.cursor_col as f64) * self.cell_w + offset_x;
             let cursor_y = (grid.cursor_row as f64) * self.cell_h + offset_y;
+            
+            // Render VFX particles
+            let mut vfx = self.cursor_vfx.borrow_mut();
+            vfx.on_move(cursor_x + self.cell_w/2.0, cursor_y + self.cell_h/2.0, self.cell_h, 0.0);
+            
+            // Release borrow for render
+            drop(vfx);
+            self.cursor_vfx.borrow().render(&self.ctx, self.cell_w, self.cell_h, CURSOR_COLOR);
+
             self.ctx.set_fill_style(&CURSOR_COLOR.into());
             self.ctx.fill_rect(cursor_x, cursor_y, self.cell_w, self.cell_h);
         }
@@ -235,7 +248,13 @@ impl Renderer {
             let mut buf = [0u8; 4];
             let s = ch.encode_utf8(&mut buf);
             let _ = self.ctx.fill_text(s, x, y + self.ascent);
+            let _ = self.ctx.fill_text(s, x, y + self.ascent);
         }
+    }
+
+    /// Update VFX state. Returns true if animation should continue.
+    pub fn update_cursor_vfx(&self, dt: f32) -> bool {
+        self.cursor_vfx.borrow_mut().update(dt)
     }
 }
 

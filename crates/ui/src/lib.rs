@@ -24,6 +24,7 @@ mod session;
 mod handler;
 mod network;
 mod drawer;
+pub mod components;
 
 use wasm_bindgen_futures::spawn_local;
 

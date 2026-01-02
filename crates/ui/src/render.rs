@@ -79,7 +79,7 @@ impl RenderState {
     }
 
     /// Execute the actual render (called from RAF)
-    fn do_render(&self) {
+    fn do_render(self: &Rc<Self>) {
         *self.raf_scheduled.borrow_mut() = false;
         
         if *self.needs_render.borrow() {
@@ -88,9 +88,10 @@ impl RenderState {
             // Track frame timing for diagnostics
             let now = js_sys::Date::now();
             let last = *self.last_frame_time.borrow();
+            let mut frame_time = 0.0;
             
             if last > 0.0 {
-                let frame_time = now - last;
+                frame_time = now - last;
                 let mut times = self.frame_times.borrow_mut();
                 
                 if times.len() >= FPS_SAMPLE_COUNT {
@@ -112,6 +113,19 @@ impl RenderState {
             // Clear dirty flags for next frame
             for grid in self.grids.borrow_mut().grids_mut() {
                 grid.mark_clean();
+            }
+            
+            // Update VFX (regardless of grid dirty state) - keep animating if returns true
+            // We use frame_time_ms (convert to seconds) as dt
+            let dt = (frame_time / 1000.0) as f32;
+            let vfx_active = self.renderer.update_cursor_vfx(if dt > 0.0 { dt } else { 0.016 });
+            
+            if vfx_active {
+                // Schedule next frame immediately for smooth animation
+                // We bypass needs_render check by setting it true and referencing logic
+                // But we must be careful not to trigger infinite loop if logic logic checks needs_render
+                // Actually, request_render sets needs_render = true.
+                self.request_render();
             }
             
             // Update diagnostics overlay if enabled

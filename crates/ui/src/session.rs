@@ -63,17 +63,27 @@ pub fn init_session() -> Result<Option<SessionConfig>, JsValue> {
                 let _ = s.remove_item("nvim_session_id");
             }
             web_sys::console::log_1(&"SESSION: Forcing new session (URL param)".into());
-             Some((format!("{base_ws}?session=new"), true))
+             
+             // Get context (current URL) for Firenvim behavior
+             let context = win.location().href().unwrap_or_default();
+             let encoded_context = js_sys::encode_uri_component(&context);
+             Some((format!("{base_ws}?session=new&context={encoded_context}"), true))
         }
         Some(ref id) => {
             // Join specific session from URL
             web_sys::console::log_1(&format!("SESSION: Joining session {id} (URL param)").into());
-             Some((format!("{base_ws}?session={id}"), true))
+             
+             let context = win.location().href().unwrap_or_default();
+             let encoded_context = js_sys::encode_uri_component(&context);
+             Some((format!("{base_ws}?session={id}&context={encoded_context}"), true))
         }
         None if open_token.is_some() => {
             // Magic link - always create new session
             web_sys::console::log_1(&"SESSION: Creating new session for magic link".into());
-             Some((format!("{base_ws}?session=new"), true))
+             
+             let context = win.location().href().unwrap_or_default();
+             let encoded_context = js_sys::encode_uri_component(&context);
+             Some((format!("{base_ws}?session=new&context={encoded_context}"), true))
         }
         None => {
             // No URL param, check localStorage
@@ -85,7 +95,10 @@ pub fn init_session() -> Result<Option<SessionConfig>, JsValue> {
                 None, // Show Dashboard instead of creating new
                 |id| {
                     web_sys::console::log_1(&format!("SESSION: Reconnecting to session {id}").into());
-                    Some((format!("{base_ws}?session={id}"), false))
+                    
+                    let context = win.location().href().unwrap_or_default();
+                    let encoded_context = js_sys::encode_uri_component(&context);
+                    Some((format!("{base_ws}?session={id}&context={encoded_context}"), false))
                 },
             )
         }

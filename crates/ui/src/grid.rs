@@ -120,6 +120,7 @@ impl Grid {
     }
 
     /// Check if any cell is dirty
+    #[allow(dead_code)]  // Part of public API, may be used by future renderers
     pub fn has_dirty_cells(&self) -> bool {
         self.dirty_all || self.cells.iter().any(|c| c.dirty)
     }
@@ -319,6 +320,7 @@ impl GridManager {
     }
 
     /// Get current Neovim mode
+    #[allow(dead_code)]  // Part of public API, may be used by future UI features
     pub fn get_mode(&self) -> &str {
         &self.current_mode
     }
