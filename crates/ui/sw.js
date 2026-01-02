@@ -12,6 +12,7 @@ const PRECACHE_URLS = [
   '/pkg/nvim_web_ui.js',
   '/pkg/nvim_web_ui_bg.wasm',
   '/fs/fs_driver.js',
+  '/fs/session_storage.js',
 ];
 
 // Install - cache core files

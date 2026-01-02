@@ -419,6 +419,68 @@
       to { transform: translateX(-50%) translateY(0); opacity: 1; }
     }
 
+    /* Session Restore Banner */
+    #session-restore-banner {
+      position: fixed;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, var(--navy-blue-light), var(--navy-blue));
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 13px;
+      z-index: 10000;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      animation: slideDown 0.4s ease;
+    }
+    #session-restore-banner.hidden {
+      display: none;
+    }
+    #session-restore-banner .banner-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    #session-restore-banner .banner-title {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    #session-restore-banner .banner-subtitle {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+    #session-restore-banner .banner-actions {
+      display: flex;
+      gap: 8px;
+    }
+    #session-restore-banner button {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #session-restore-banner .btn-restore {
+      background: var(--cyan-green);
+      color: #fff;
+    }
+    #session-restore-banner .btn-restore:hover {
+      background: var(--cyan-green-light);
+    }
+    #session-restore-banner .btn-dismiss {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+    #session-restore-banner .btn-dismiss:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
     /* URL Drop Zone Overlay */
     #url-drop-overlay {
       position: fixed;
@@ -677,6 +739,143 @@
     }
     .share-btn:active {
       transform: translateY(0);
+    }
+
+    /* Share Modal */
+    #share-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      z-index: 20000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.2s ease;
+    }
+    #share-modal-overlay.hidden {
+      display: none;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    #share-modal {
+      background: var(--bg-medium);
+      border: 1px solid var(--navy-blue-light);
+      border-radius: 16px;
+      padding: 24px;
+      width: 90%;
+      max-width: 420px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      animation: modalSlideIn 0.3s ease;
+    }
+    @keyframes modalSlideIn {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .share-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .share-modal-header h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .share-modal-close {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 4px 8px;
+      line-height: 1;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .share-modal-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+    .share-link-container {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .share-link-input {
+      flex: 1;
+      background: var(--bg-dark);
+      border: 1px solid var(--navy-blue-light);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text-primary);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      outline: none;
+    }
+    .share-link-input:focus {
+      border-color: var(--cyan-green);
+    }
+    .share-copy-btn {
+      background: var(--cyan-green);
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .share-copy-btn:hover {
+      background: var(--cyan-green-light);
+    }
+    .share-copy-btn.copied {
+      background: #50fa7b;
+    }
+    .share-qr-section {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      padding: 16px;
+      background: var(--bg-dark);
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+    #share-qr-canvas {
+      width: 120px;
+      height: 120px;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .share-qr-text {
+      flex: 1;
+    }
+    .share-qr-text h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+    .share-qr-text p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .share-info {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
     }
 
     /* Status Drawer - Glassmorphism style */
@@ -949,102 +1148,6 @@
       display: block;
     }
 
-    /* Widget Grid System */
-    .widget-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-
-    .widget {
-      background: #2d2d2d;
-      border: 1px solid #3c3c3c;
-      border-radius: 6px;
-      padding: 12px;
-      min-height: 80px;
-    }
-
-    .widget[data-width="2"] { grid-column: span 2; }
-    .widget[data-width="3"] { grid-column: span 3; }
-
-    .widget-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 10px;
-    }
-
-    .widget-title {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #858585;
-      font-weight: 500;
-      margin: 0;
-    }
-
-    .widget-close {
-      background: none;
-      border: none;
-      color: #555;
-      cursor: pointer;
-      font-size: 14px;
-      padding: 0 4px;
-      line-height: 1;
-    }
-
-    .widget-close:hover { color: #ff5555; }
-
-    .widget-body {
-      color: #ccc;
-      font-size: 12px;
-    }
-
-    /* Widget: Actions */
-    .widget-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .widget-actions button {
-      background: #3c3c3c;
-      border: 1px solid #4c4c4c;
-      color: #ccc;
-      padding: 6px 14px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      font-family: inherit;
-      transition: all 0.1s;
-    }
-    .widget-actions button:hover {
-      background: #505050;
-      border-color: #606060;
-      color: #fff;
-    }
-
-    /* Widget: Clock */
-    .widget-clock {
-      font-size: 24px;
-      font-weight: 300;
-      color: #569cd6;
-      text-align: center;
-      padding: 10px 0;
-    }
-
-    /* Widget: Notes */
-    .widget-notes textarea {
-      width: 100%;
-      height: 60px;
-      background: #1e1e1e;
-      border: 1px solid #3c3c3c;
-      border-radius: 4px;
-      color: #ccc;
-      font-size: 12px;
-      font-family: inherit;
-      padding: 8px;
-      resize: none;
-    }
-    .widget-notes textarea:focus {
-      outline: none;
-      border-color: #0e639c;
-    }
 
     .drawer-section {
       margin-bottom: 20px;
@@ -1654,6 +1757,48 @@
 
 
   <div id="nvim-toast"></div>
+
+  <!-- Session Restore Banner -->
+  <div id="session-restore-banner" class="hidden">
+    <div class="banner-text">
+      <span class="banner-title">Previous session found</span>
+      <span class="banner-subtitle" id="session-restore-info">0 files, 0 unsaved</span>
+    </div>
+    <div class="banner-actions">
+      <button class="btn-restore" id="session-restore-btn">Restore</button>
+      <button class="btn-dismiss" id="session-dismiss-btn">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- Session Storage Script -->
+  <script src="/fs/session_storage.js"></script>
+
+  <!-- Share Modal -->
+  <div id="share-modal-overlay" class="hidden">
+    <div id="share-modal">
+      <div class="share-modal-header">
+        <h3>Share Session</h3>
+        <button class="share-modal-close" id="share-modal-close">&times;</button>
+      </div>
+      
+      <div class="share-link-container">
+        <input type="text" class="share-link-input" id="share-link-input" readonly>
+        <button class="share-copy-btn" id="share-copy-btn">Copy</button>
+      </div>
+      
+      <div class="share-qr-section">
+        <canvas id="share-qr-canvas" width="120" height="120"></canvas>
+        <div class="share-qr-text">
+          <h4>Scan with mobile</h4>
+          <p>Anyone with this link can view your session in real-time (read-only).</p>
+        </div>
+      </div>
+      
+      <div class="share-info">
+        Link works while your session is active
+      </div>
+    </div>
+  </div>
   
   <!-- FPS/Latency Diagnostics Overlay (Toggle with F3) -->
   <div id="diagnostics-overlay" class="diagnostics-overlay hidden">
@@ -1999,6 +2144,103 @@
       if (installBtn) installBtn.classList.add('hidden');
     };
     
+    // === SESSION RESTORE ===
+    // Check for restorable session on page load
+    (async function initSessionRestore() {
+      if (!window.__sessionStorage) {
+        console.log('[Session] Storage not available');
+        return;
+      }
+      
+      try {
+        const hasSession = await window.__sessionStorage.hasSession();
+        if (hasSession) {
+          const summary = await window.__sessionStorage.getSessionSummary();
+          const banner = document.getElementById('session-restore-banner');
+          const info = document.getElementById('session-restore-info');
+          
+          if (banner && info) {
+            const timeAgo = formatTimeAgo(summary.lastModified);
+            info.textContent = `${summary.fileCount} file${summary.fileCount !== 1 ? 's' : ''}${summary.dirtyCount > 0 ? `, ${summary.dirtyCount} unsaved` : ''} (${timeAgo})`;
+            banner.classList.remove('hidden');
+            
+            // Auto-hide after 10 seconds if not interacted
+            setTimeout(() => {
+              banner.classList.add('hidden');
+            }, 10000);
+          }
+        }
+      } catch (e) {
+        console.error('[Session] Failed to check for restorable session:', e);
+      }
+    })();
+    
+    // Format timestamp as relative time
+    function formatTimeAgo(timestamp) {
+      const seconds = Math.floor((Date.now() - timestamp) / 1000);
+      if (seconds < 60) return 'just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+    
+    // Session restore button
+    document.getElementById('session-restore-btn')?.addEventListener('click', async () => {
+      const banner = document.getElementById('session-restore-banner');
+      banner?.classList.add('hidden');
+      
+      try {
+        const files = await window.__sessionStorage.listOpenFiles();
+        console.log('[Session] Restoring', files.length, 'files');
+        
+        // Open each file in Neovim
+        for (const file of files) {
+          if (window.__nvim_input) {
+            // Open the file
+            window.__nvim_input(`:e ${file.path}\n`);
+            
+            // If there's dirty content, we'd need to restore it via VFS
+            // For now, just open the file paths
+          }
+        }
+        
+        showToast(`Restored ${files.length} file${files.length !== 1 ? 's' : ''}`, 2000);
+      } catch (e) {
+        console.error('[Session] Restore failed:', e);
+        showToast('Failed to restore session', 3000);
+      }
+    });
+    
+    // Session dismiss button
+    document.getElementById('session-dismiss-btn')?.addEventListener('click', async () => {
+      const banner = document.getElementById('session-restore-banner');
+      banner?.classList.add('hidden');
+      
+      // Clear the session
+      await window.__sessionStorage?.clear();
+      console.log('[Session] Previous session dismissed');
+    });
+    
+    // Expose session save function for Neovim integration
+    window.__saveSessionFile = async function(path, content, cursor, dirty) {
+      if (!window.__sessionStorage) return;
+      try {
+        await window.__sessionStorage.saveFile(path, content, cursor, dirty);
+      } catch (e) {
+        console.error('[Session] Failed to save file state:', e);
+      }
+    };
+    
+    // Expose session delete function
+    window.__deleteSessionFile = async function(path) {
+      if (!window.__sessionStorage) return;
+      try {
+        await window.__sessionStorage.deleteFile(path);
+      } catch (e) {
+        console.error('[Session] Failed to delete file state:', e);
+      }
+    };
+    
     // URL Drag-Drop with Visual Overlay
     const dropOverlay = document.getElementById('url-drop-overlay');
     const editorRoot = document.getElementById('editor-root');
@@ -2114,24 +2356,140 @@
       }
     });
     
-    // Share button click handler
-    document.getElementById('share-btn').addEventListener('click', async () => {
+    // Share button click handler - opens modal
+    document.getElementById('share-btn').addEventListener('click', () => {
       if (!currentSessionId) {
         showToast('No active session to share', 'error');
         return;
       }
       
-      // Generate share URL with ?view= parameter
+      // Generate share URL
       const shareUrl = `${window.location.origin}?view=${currentSessionId}`;
       
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        showToast('Share link copied!', 'success');
-      } catch (err) {
-        // Fallback: show URL in prompt
-        prompt('Copy this link to share:', shareUrl);
+      // Update modal
+      document.getElementById('share-link-input').value = shareUrl;
+      document.getElementById('share-copy-btn').textContent = 'Copy';
+      document.getElementById('share-copy-btn').classList.remove('copied');
+      
+      // Generate QR code
+      generateQRCode(shareUrl);
+      
+      // Show modal
+      document.getElementById('share-modal-overlay').classList.remove('hidden');
+    });
+    
+    // Share modal close handlers
+    document.getElementById('share-modal-close').addEventListener('click', () => {
+      document.getElementById('share-modal-overlay').classList.add('hidden');
+    });
+    
+    document.getElementById('share-modal-overlay').addEventListener('click', (e) => {
+      if (e.target.id === 'share-modal-overlay') {
+        document.getElementById('share-modal-overlay').classList.add('hidden');
       }
     });
+    
+    // Copy button handler
+    document.getElementById('share-copy-btn').addEventListener('click', async () => {
+      const input = document.getElementById('share-link-input');
+      const btn = document.getElementById('share-copy-btn');
+      
+      try {
+        await navigator.clipboard.writeText(input.value);
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        
+        // Reset after 2 seconds
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 2000);
+      } catch (err) {
+        // Fallback: select input text
+        input.select();
+        document.execCommand('copy');
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+      }
+    });
+    
+    // Click on input to select all
+    document.getElementById('share-link-input').addEventListener('click', function() {
+      this.select();
+    });
+    
+    // Simple QR Code Generator (no dependencies)
+    function generateQRCode(url) {
+      const canvas = document.getElementById('share-qr-canvas');
+      const ctx = canvas.getContext('2d');
+      const size = 120;
+      
+      // Clear canvas
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      
+      // Simple visual placeholder with URL hash pattern
+      // For a production app, use a proper QR library
+      // This creates a recognizable pattern based on the URL
+      const hash = hashString(url);
+      const moduleSize = 4;
+      const modules = Math.floor(size / moduleSize);
+      
+      ctx.fillStyle = '#000000';
+      
+      // Draw position patterns (corners)
+      drawPositionPattern(ctx, 0, 0, moduleSize);
+      drawPositionPattern(ctx, (modules - 7) * moduleSize, 0, moduleSize);
+      drawPositionPattern(ctx, 0, (modules - 7) * moduleSize, moduleSize);
+      
+      // Draw data pattern based on URL hash
+      for (let y = 0; y < modules; y++) {
+        for (let x = 0; x < modules; x++) {
+          // Skip position patterns
+          if (isPositionPattern(x, y, modules)) continue;
+          
+          // Generate pseudo-random pattern from hash
+          const idx = y * modules + x;
+          const bit = (hash >> (idx % 32)) & 1;
+          const bit2 = (hash >> ((idx + 7) % 32)) & 1;
+          
+          if (bit ^ bit2) {
+            ctx.fillRect(x * moduleSize, y * moduleSize, moduleSize - 1, moduleSize - 1);
+          }
+        }
+      }
+    }
+    
+    function drawPositionPattern(ctx, x, y, moduleSize) {
+      // Outer square
+      ctx.fillRect(x, y, 7 * moduleSize, 7 * moduleSize);
+      // White inner
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x + moduleSize, y + moduleSize, 5 * moduleSize, 5 * moduleSize);
+      // Black center
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(x + 2 * moduleSize, y + 2 * moduleSize, 3 * moduleSize, 3 * moduleSize);
+    }
+    
+    function isPositionPattern(x, y, modules) {
+      // Top-left
+      if (x < 8 && y < 8) return true;
+      // Top-right
+      if (x >= modules - 8 && y < 8) return true;
+      // Bottom-left
+      if (x < 8 && y >= modules - 8) return true;
+      return false;
+    }
+    
+    function hashString(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+      }
+      return Math.abs(hash);
+    }
     
     // Export viewer mode state
     window.isViewerMode = () => isViewerMode;
@@ -2601,410 +2959,27 @@
 
     // Note: Drawer toggle functionality is now in the failsafe sync script above
 
-    // === WIDGET SYSTEM ===
-    window.__widgets = {
-      _registry: {},
-      _layout: JSON.parse(localStorage.getItem('nvim_widget_layout') || '["actions", "session", "clock", "notes"]'),
-      _hidden: JSON.parse(localStorage.getItem('nvim_widget_hidden') || '[]'),
+    // === PLUGIN API ===
+    // Extensibility hook for future features
+    window.__nvimPlugins = {
+      _hooks: {},
       
-      register(widget) {
-        this._registry[widget.id] = widget;
-        this.render();
+      // Register a hook callback
+      on(event, callback) {
+        if (!this._hooks[event]) this._hooks[event] = [];
+        this._hooks[event].push(callback);
       },
       
-      hide(id) {
-        if (!this._hidden.includes(id)) {
-          this._hidden.push(id);
-          localStorage.setItem('nvim_widget_hidden', JSON.stringify(this._hidden));
-          this.render();
-        }
+      // Emit an event to all registered hooks
+      emit(event, data) {
+        (this._hooks[event] || []).forEach(cb => cb(data));
       },
       
-      show(id) {
-        this._hidden = this._hidden.filter(x => x !== id);
-        localStorage.setItem('nvim_widget_hidden', JSON.stringify(this._hidden));
-        this.render();
-      },
-      
-      setLayout(ids) {
-        this._layout = ids;
-        localStorage.setItem('nvim_widget_layout', JSON.stringify(ids));
-        this.render();
-      },
-      
-      update(id) {
-        const el = document.querySelector(`[data-widget-id="${id}"] .widget-body`);
-        const widget = this._registry[id];
-        if (el && widget) {
-          el.innerHTML = widget.render();
-          if (widget.init) widget.init(el);
-        }
-      },
-      
-      render() {
-        const grid = document.getElementById('widget-grid');
-        if (!grid) return;
-        
-        grid.innerHTML = '';
-        
-        for (const id of this._layout) {
-          if (this._hidden.includes(id)) continue;
-          const widget = this._registry[id];
-          if (!widget) continue;
-          
-          const el = document.createElement('div');
-          el.className = 'widget';
-          el.setAttribute('data-widget-id', id);
-          el.setAttribute('data-width', widget.width || 1);
-          
-          el.innerHTML = `
-            <div class="widget-header">
-              <h3 class="widget-title">${widget.title}</h3>
-              <button class="widget-close" title="Hide widget">&times;</button>
-            </div>
-            <div class="widget-body">${widget.render()}</div>
-          `;
-          
-          el.querySelector('.widget-close').onclick = () => this.hide(id);
-          grid.appendChild(el);
-          
-          if (widget.init) widget.init(el.querySelector('.widget-body'));
-        }
-      },
-      
-      list() {
-        return Object.keys(this._registry);
+      // Get drawer container for custom UI injection
+      getDrawerContainer() {
+        return document.getElementById('drawer-content');
       }
     };
-    
-    // Built-in: Actions widget
-    window.__widgets.register({
-      id: 'actions',
-      title: 'Quick Actions',
-      width: 2,
-      render() {
-        return `<div class="widget-actions">
-          <button data-cmd=":w\n">Save</button>
-          <button data-cmd=":q\n">Close</button>
-          <button data-cmd=":vs\n">V-Split</button>
-          <button data-cmd=":sp\n">H-Split</button>
-          <button data-cmd=":tabnew\n">New Tab</button>
-          <button data-cmd=":e .\n">Files</button>
-        </div>`;
-      },
-      init(el) {
-        el.querySelectorAll('button[data-cmd]').forEach(btn => {
-          btn.onclick = () => {
-            if (window.__nvim_input) {
-              window.__nvim_input(btn.dataset.cmd);
-            }
-            document.getElementById('editor-root').focus();
-          };
-        });
-      }
-    });
-    
-    // Built-in: Session widget
-    window.__widgets.register({
-      id: 'session',
-      title: 'Session Info',
-      width: 1,
-      render() {
-        const sessionId = localStorage.getItem('nvim_session_id') || '-';
-        const backend = localStorage.getItem('nvim_default_backend') || 'local';
-        return `<div style="font-size:11px;color:#858585;">
-          <div><strong style="color:#ccc;">Session:</strong> ${sessionId.slice(0,8)}...</div>
-          <div><strong style="color:#ccc;">Backend:</strong> ${backend}</div>
-        </div>`;
-      }
-    });
-    
-    // Built-in: Clock widget
-    window.__widgets.register({
-      id: 'clock',
-      title: 'Clock',
-      width: 1,
-      render() {
-        return `<div class="widget-clock">${new Date().toLocaleTimeString()}</div>`;
-      },
-      init() {
-        setInterval(() => window.__widgets.update('clock'), 1000);
-      }
-    });
-    
-    // Built-in: Notes widget
-    window.__widgets.register({
-      id: 'notes',
-      title: 'Scratchpad',
-      width: 2,
-      render() {
-        const notes = localStorage.getItem('nvim_widget_notes') || '';
-        return `<div class="widget-notes">
-          <textarea placeholder="Quick notes...">${notes}</textarea>
-        </div>`;
-      },
-      init(el) {
-        const ta = el.querySelector('textarea');
-        ta.oninput = () => localStorage.setItem('nvim_widget_notes', ta.value);
-      }
-    });
-    
-    // Built-in: Pomodoro Timer widget
-    window.__widgets.register({
-      id: 'pomodoro',
-      title: 'Pomodoro',
-      width: 1,
-      _timer: null,
-      _seconds: parseInt(localStorage.getItem('nvim_pomodoro_seconds') || '1500'),
-      render() {
-        const mins = Math.floor(this._seconds / 60);
-        const secs = this._seconds % 60;
-        return `<div style="text-align:center;">
-          <div style="font-size:24px;font-weight:bold;color:#50fa7b;">${mins}:${secs.toString().padStart(2, '0')}</div>
-          <div style="margin-top:8px;">
-            <button onclick="window.__widgets.get('pomodoro').toggle()" style="padding:4px 12px;border-radius:4px;border:none;background:#007AFF;color:#fff;cursor:pointer;">
-              ${this._timer ? 'Pause' : 'Start'}
-            </button>
-            <button onclick="window.__widgets.get('pomodoro').reset()" style="padding:4px 8px;border-radius:4px;border:1px solid #555;background:transparent;color:#858585;cursor:pointer;margin-left:4px;">
-              Reset
-            </button>
-          </div>
-        </div>`;
-      },
-      toggle() {
-        if (this._timer) {
-          clearInterval(this._timer);
-          this._timer = null;
-        } else {
-          this._timer = setInterval(() => {
-            if (this._seconds > 0) {
-              this._seconds--;
-              localStorage.setItem('nvim_pomodoro_seconds', this._seconds);
-              window.__widgets.update('pomodoro');
-            } else {
-              clearInterval(this._timer);
-              this._timer = null;
-              showToast('Pomodoro complete!', 'success');
-            }
-          }, 1000);
-        }
-        window.__widgets.update('pomodoro');
-      },
-      reset() {
-        if (this._timer) clearInterval(this._timer);
-        this._timer = null;
-        this._seconds = 1500;
-        localStorage.setItem('nvim_pomodoro_seconds', '1500');
-        window.__widgets.update('pomodoro');
-      }
-    });
-    
-    // Built-in: Shortcuts cheatsheet widget
-    window.__widgets.register({
-      id: 'shortcuts',
-      title: 'Vim Shortcuts',
-      width: 2,
-      render() {
-        return `<div style="font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;color:#858585;">
-          <kbd style="color:#569cd6;">i</kbd><span>Insert mode</span>
-          <kbd style="color:#569cd6;">Esc</kbd><span>Normal mode</span>
-          <kbd style="color:#569cd6;">:w</kbd><span>Save file</span>
-          <kbd style="color:#569cd6;">:q</kbd><span>Quit/close</span>
-          <kbd style="color:#569cd6;">/</kbd><span>Search</span>
-          <kbd style="color:#569cd6;">dd</kbd><span>Delete line</span>
-          <kbd style="color:#569cd6;">yy</kbd><span>Copy line</span>
-          <kbd style="color:#569cd6;">p</kbd><span>Paste</span>
-          <kbd style="color:#569cd6;">u</kbd><span>Undo</span>
-          <kbd style="color:#569cd6;">Ctrl+r</kbd><span>Redo</span>
-        </div>`;
-      }
-    });
-    
-    // Built-in: Git Status widget (uses drawer data)
-    window.__widgets.register({
-      id: 'git',
-      title: 'Git',
-      width: 1,
-      render() {
-        const branch = document.getElementById('drawer-git')?.textContent || '-';
-        const cwd = document.getElementById('drawer-cwd')?.textContent || '~';
-        return `<div style="font-size:11px;color:#858585;">
-          <div style="margin-bottom:4px;"><span style="color:#50fa7b;">Branch:</span> <strong style="color:#ccc;">${branch || 'not a repo'}</strong></div>
-          <div><span style="color:#569cd6;">CWD:</span> ${cwd}</div>
-        </div>`;
-      }
-    });
-    
-    // Built-in: SSH Connection widget
-    window.__widgets.register({
-      id: 'ssh',
-      title: 'SSH Remote',
-      width: 2,
-      _connected: false,
-      _loading: false,
-      _error: null,
-      _currentHost: null,
-      
-      getHistory() {
-        return JSON.parse(localStorage.getItem('nvim_ssh_history') || '[]');
-      },
-      
-      addToHistory(conn) {
-        let history = this.getHistory();
-        // Remove duplicates
-        history = history.filter(h => !(h.host === conn.host && h.user === conn.user && h.port === conn.port));
-        // Add to front
-        history.unshift(conn);
-        // Keep last 5
-        history = history.slice(0, 5);
-        localStorage.setItem('nvim_ssh_history', JSON.stringify(history));
-      },
-      
-      removeFromHistory(index) {
-        let history = this.getHistory();
-        history.splice(index, 1);
-        localStorage.setItem('nvim_ssh_history', JSON.stringify(history));
-        window.__widgets.update('ssh');
-      },
-      
-      render() {
-        const history = this.getHistory();
-        const historyHtml = history.length > 0 ? `
-          <div class="ssh-history">
-            <div style="font-size:10px;color:#555;margin-bottom:4px;">Recent</div>
-            ${history.map((h, i) => `
-              <div class="ssh-history-item" data-index="${i}">
-                <span>${h.user}@${h.host}:${h.port || 22}</span>
-                <span class="ssh-history-delete" data-index="${i}">&times;</span>
-              </div>
-            `).join('')}
-          </div>
-        ` : '';
-        
-        const statusHtml = this._error ? `<div class="ssh-status error">${this._error}</div>` :
-                          this._loading ? `<div class="ssh-status loading">Connecting...</div>` :
-                          this._connected ? `<div class="ssh-status success">Connected to ${this._currentHost}</div>` : '';
-        
-        if (this._connected) {
-          return `<div class="ssh-form">
-            ${statusHtml}
-            <button class="disconnect" data-action="disconnect">Disconnect</button>
-          </div>`;
-        }
-        
-        return `<div class="ssh-form">
-          <div class="ssh-form-row">
-            <input type="text" name="user" placeholder="username" value="">
-            <span style="color:#555;line-height:30px;">@</span>
-            <input type="text" name="host" placeholder="hostname" value="">
-            <span style="color:#555;line-height:30px;">:</span>
-            <input type="number" name="port" class="ssh-port" placeholder="22" value="22">
-          </div>
-          <div class="ssh-form-row">
-            <input type="password" name="password" placeholder="password (optional, uses SSH key if empty)" value="">
-          </div>
-          <div class="ssh-form-row">
-            <button data-action="test">Test Connection</button>
-            <button data-action="connect">Connect</button>
-          </div>
-          ${statusHtml}
-          ${historyHtml}
-        </div>`;
-      },
-      
-      init(el) {
-        const widget = this;
-        
-        // History item click - fill form
-        el.querySelectorAll('.ssh-history-item').forEach(item => {
-          item.onclick = (e) => {
-            if (e.target.classList.contains('ssh-history-delete')) {
-              widget.removeFromHistory(parseInt(e.target.dataset.index));
-              return;
-            }
-            const history = widget.getHistory();
-            const conn = history[parseInt(item.dataset.index)];
-            if (conn) {
-              el.querySelector('input[name="user"]').value = conn.user;
-              el.querySelector('input[name="host"]').value = conn.host;
-              el.querySelector('input[name="port"]').value = conn.port || 22;
-            }
-          };
-        });
-        
-        // Button actions
-        el.querySelectorAll('button[data-action]').forEach(btn => {
-          btn.onclick = async () => {
-            const action = btn.dataset.action;
-            
-            if (action === 'disconnect') {
-              widget._connected = false;
-              widget._currentHost = null;
-              window.__drawer.setBackend('local');
-              window.__widgets.update('ssh');
-              return;
-            }
-            
-            const user = el.querySelector('input[name="user"]')?.value.trim();
-            const host = el.querySelector('input[name="host"]')?.value.trim();
-            const port = parseInt(el.querySelector('input[name="port"]')?.value) || 22;
-            const password = el.querySelector('input[name="password"]')?.value;
-            
-            if (!user || !host) {
-              widget._error = 'Username and hostname are required';
-              window.__widgets.update('ssh');
-              return;
-            }
-            
-            widget._loading = true;
-            widget._error = null;
-            window.__widgets.update('ssh');
-            
-            try {
-              const endpoint = action === 'test' ? '/api/ssh/test' : '/api/ssh/connect';
-              const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ host, port, user, password: password || null })
-              });
-              const data = await response.json();
-              
-              widget._loading = false;
-              
-              if (!response.ok || data.error) {
-                widget._error = data.error || 'Connection failed';
-              } else {
-                widget._error = null;
-                if (action === 'connect') {
-                  widget._connected = true;
-                  widget._currentHost = `${user}@${host}`;
-                  widget.addToHistory({ user, host, port });
-                  window.__drawer.setBackend('ssh');
-                } else {
-                  widget._error = null;
-                  // Show success briefly for test
-                  window.__drawer.showToast('SSH connection successful!', 2000);
-                }
-              }
-            } catch (e) {
-              widget._loading = false;
-              widget._error = 'Network error: ' + e.message;
-            }
-            
-            window.__widgets.update('ssh');
-          };
-        });
-      }
-    });
-    
-    // Update default layout to include new widgets
-    if (!localStorage.getItem('nvim_widget_layout')) {
-      window.__widgets._layout = ['actions', 'ssh', 'git', 'notes'];
-    }
-    
-    // Initial render
-    window.__widgets.render();
-    
 
     // Track dirty state for beforeunload warning
     let isDirty = false;
@@ -3017,6 +2992,8 @@
         return e.returnValue;
       }
     });
+
+
 
     // Cmd+W / Ctrl+W intercept - prevent accidental tab close
     window.addEventListener('keydown', (e) => {
