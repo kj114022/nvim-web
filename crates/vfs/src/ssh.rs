@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use ssh2::{Session, Sftp};
 
 use super::{FileStat, VfsBackend};
+use secrecy::{ExposeSecret, SecretString};
 
 /// Connection pool entry with last-used timestamp
 struct PoolEntry {
@@ -55,7 +56,8 @@ struct ParsedSsh {
     user: String,
     host: String,
     port: u16,
-    password: Option<String>,
+    /// Password stored securely - auto-zeroed on drop
+    password: Option<SecretString>,
 }
 
 impl SshFsBackend {
@@ -201,7 +203,7 @@ impl SshFsBackend {
     /// Test SSH connection without storing it
     pub fn test_connection(uri: &str, password: Option<&str>) -> Result<()> {
         let mut parsed = Self::parse_ssh_uri(uri)?;
-        parsed.password = password.map(ToString::to_string);
+        parsed.password = password.map(|p| SecretString::new(p.to_string()));
         let _backend = Self::connect_new_with_password(&parsed)?;
         Ok(())
     }
@@ -209,7 +211,7 @@ impl SshFsBackend {
     /// Connect with optional password and return pooled backend
     pub fn connect_with_password(uri: &str, password: Option<&str>) -> Result<Arc<Self>> {
         let mut parsed = Self::parse_ssh_uri(uri)?;
-        parsed.password = password.map(ToString::to_string);
+        parsed.password = password.map(|p| SecretString::new(p.to_string()));
         let pool_key = format!("{}@{}:{}", parsed.user, parsed.host, parsed.port);
 
         // Create new connection with password
@@ -266,9 +268,9 @@ impl SshFsBackend {
 
     /// Authenticate with password support
     fn authenticate_with_password(session: &Session, parsed: &ParsedSsh) -> Result<()> {
-        // Try password first if provided
+        // Try password first if provided (expose secret only at auth time)
         if let Some(ref password) = parsed.password {
-            if session.userauth_password(&parsed.user, password).is_ok() {
+            if session.userauth_password(&parsed.user, password.expose_secret()).is_ok() {
                 eprintln!("  [ssh] Authenticated with password");
                 return Ok(());
             }

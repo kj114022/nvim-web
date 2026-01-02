@@ -73,7 +73,7 @@ async fn session_count(State(state): State<AppState>) -> Json<serde_json::Value>
 
 async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
     let mut mgr = state.session_manager.write().await;
-    match mgr.create_session().await {
+    match mgr.create_session(None).await {
         Ok(id) => (
             StatusCode::OK,
             Json(serde_json::json!({ "id": id, "created": true })),

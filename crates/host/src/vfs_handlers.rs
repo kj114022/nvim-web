@@ -205,6 +205,57 @@ pub async fn handle_write_vfs(
     Ok(())
 }
 
+/// Handle delete VFS file/directory request
+///
+/// Recursively deletes the path in the VFS backend.
+pub async fn handle_delete_vfs(
+    vfs_path: &str,
+    session: &AsyncSession,
+    vfs_manager: &VfsManager,
+) -> Result<()> {
+    // Perform deletion via VFS manager
+    // For now we use the async_ops logic directly or exposed via manager
+    // Since VfsManager doesn't expose remove_dir_all directly yet (it maps to backend),
+    // we need to resolve backend and call async_ops.
+    
+    // Parse URI to get backend
+    let uri = url::Url::parse(vfs_path).map_err(|e| anyhow::anyhow!("Invalid URI: {e}"))?;
+    let scheme = uri.scheme();
+    
+    let vfs = vfs_manager; // We have &VfsManager
+    // We need to access the inner backend. VfsManager.get_backend(scheme) -> Result<Arc<dyn VfsBackend>>
+    
+    if let Ok(backend) = vfs.get_backend(scheme).await {
+        // Path logic depends on backend (e.g. ssh has /path, local has path)
+        // VfsManager::resolve_path handles this, but here we need backend access.
+        // Let's assume VfsManager exposes a way or we manually resolve.
+        
+        let path = if scheme == "file" || scheme == "local" {
+            uri.path().to_string()
+        } else if scheme == "ssh" {
+            uri.path().to_string()
+        } else if scheme == "browser" {
+            uri.path().to_string()
+        } else {
+             uri.path().to_string()
+        };
+        
+        crate::vfs::async_ops::remove_dir_all(backend.as_ref(), &path).await?;
+        
+        // Notify user via echomsg
+        let msg = format!("Deleted {vfs_path}");
+        session.rpc_call("nvim_call_function", vec![
+             Value::String("NvimWeb_EchoMsg".into()), 
+             Value::Array(vec![Value::String(msg.into())])
+        ]).await.ok(); // Ignore error if function doesn't exist
+        
+        eprintln!("VFS: Deleted {vfs_path}");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Backend not found for {scheme}"))
+    }
+}
+
 /// List directory tree for file explorer
 ///
 /// Returns a tree structure of files and directories.

@@ -92,6 +92,7 @@ impl MemoryFs {
     }
 
     /// Get file name from path
+    #[allow(dead_code)]  // Utility function for future use
     fn file_name(path: &str) -> Option<String> {
         let path = Self::normalize_path(path);
         path.rsplit('/').next().map(String::from)

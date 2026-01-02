@@ -6,6 +6,7 @@ pub mod local;
 pub mod manager;
 pub mod memory;
 pub mod overlay;
+pub mod async_ops;
 pub mod ssh;
 
 pub use backend::{FileStat, ReadChunk, ReadHandle, VfsBackend, WriteHandle};
