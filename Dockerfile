@@ -22,9 +22,16 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    neovim \
     ca-certificates \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Neovim v0.10.0 (Debian package is too old)
+RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.10.0/nvim-linux64.tar.gz \
+    && tar xzf nvim-linux64.tar.gz -C /opt \
+    && rm nvim-linux64.tar.gz \
+    && ln -s /opt/nvim-linux64/bin/nvim /usr/local/bin/nvim
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/nvim-web-host /usr/local/bin/

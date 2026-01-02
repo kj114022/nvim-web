@@ -18,8 +18,8 @@ authors = ["nvim-web contributors"]
 repository = "https://github.com/kj114022/nvim-web"
 homepage = "https://github.com/kj114022/nvim-web"
 readme = "README.md"
-keywords = ["neovim", "browser", "websocket", "wasm", "editor"]
-categories = ["development-tools", "web-programming"]
+keywords = ["neovim", "browser", "websocket", "wasm", "ui", "remote"]
+categories = ["development-tools", "web-programming", "text-editors"]
 
 # Shared dependencies
 [workspace.dependencies]

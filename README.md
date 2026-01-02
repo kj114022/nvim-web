@@ -5,9 +5,8 @@ Neovim in the browser. Real Neovim, not an emulation.
 ## Quick Start
 
 ```bash
-# Build and start (single binary - all assets embedded)
-cargo build --release -p nvim-web-host
-./target/release/nvim-web-host
+# Build and start
+cargo run --release -p nvim-web-host
 
 # Open browser
 open http://localhost:8080
