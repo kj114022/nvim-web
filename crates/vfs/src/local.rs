@@ -28,12 +28,33 @@ impl LocalFs {
         }
     }
 
+    /// Validate path format before resolution
+    fn validate_path(path: &str) -> Result<()> {
+        // Enforce portable paths: forward slashes only
+        if path.contains('\\') {
+            bail!("Invalid path: backslashes not allowed (use forward slashes)");
+        }
+        // No device paths or drive letters in relative path components
+        if path.contains(':') {
+            bail!("Invalid path: colon not allowed");
+        }
+        // No absolute paths
+        if path.starts_with('/') {
+            // We trim leading slashes in resolve(), but strictly speaking
+            // the input to VFS methods usually comes without leading slash or we handle it.
+            // resolve() trims it, so it's fine.
+        }
+        Ok(())
+    }
+
     /// Resolve VFS path to absolute filesystem path with security checks
     ///
     /// SECURITY: Prevents path traversal attacks by:
     /// 1. Canonicalizing the resolved path
     /// 2. Verifying it stays within the sandbox root
     fn resolve(&self, path: &str) -> Result<PathBuf> {
+        Self::validate_path(path)?;
+
         // Build the target path
         let target = self.root.join(path.trim_start_matches('/'));
 
@@ -59,32 +80,66 @@ impl LocalFs {
             )
         };
 
-        // SECURITY CHECK: Verify path is within sandbox
-        if !resolved.starts_with(&self.root) {
-            bail!(
-                "Path traversal blocked: {} escapes sandbox {}",
-                path,
-                self.root.display()
-            );
-        }
+        self.verify_sandbox(&resolved, path)?;
 
         Ok(resolved)
     }
 
     /// Resolve path without creating parent directories (for read/stat operations)
     fn resolve_existing(&self, path: &str) -> Result<PathBuf> {
+        Self::validate_path(path)?;
+        
         let target = self.root.join(path.trim_start_matches('/'));
         let resolved = target.canonicalize()?;
 
-        if !resolved.starts_with(&self.root) {
-            bail!(
-                "Path traversal blocked: {} escapes sandbox {}",
-                path,
-                self.root.display()
-            );
-        }
+        self.verify_sandbox(&resolved, path)?;
 
         Ok(resolved)
+    }
+
+    /// Verify that the resolved path is within the sandbox root
+    fn verify_sandbox(&self, resolved: &std::path::Path, original_path: &str) -> Result<()> {
+        #[cfg(unix)]
+        {
+            if !resolved.starts_with(&self.root) {
+                bail!(
+                    "Path traversal blocked: {} escapes sandbox {}",
+                    original_path,
+                    self.root.display()
+                );
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // Case-insensitive check for Windows
+            // We compare absolute paths. both should be canonicalized (root is canonicalized in new)
+            let resolved_str = resolved.to_string_lossy().to_lowercase();
+            let root_str = self.root.to_string_lossy().to_lowercase();
+            
+            // Note: to_string_lossy might not be perfect but for security check it's safer to fail closed
+            if !resolved_str.starts_with(&root_str) {
+                 bail!(
+                    "Path traversal blocked (Windows): {} escapes sandbox {}",
+                    original_path,
+                    self.root.display()
+                );
+            }
+        }
+        
+        // Fallback or other OS? Assume unix-like strictness
+        #[cfg(not(any(unix, windows)))]
+        {
+             if !resolved.starts_with(&self.root) {
+                bail!(
+                    "Path traversal blocked: {} escapes sandbox {}",
+                    original_path,
+                    self.root.display()
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
