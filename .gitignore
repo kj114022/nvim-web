@@ -48,3 +48,6 @@ Desktop.ini
 
 # Gemini/AI artifacts (local development only)
 .gemini/
+
+# vendor
+vendor/

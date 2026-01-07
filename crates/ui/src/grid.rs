@@ -136,9 +136,9 @@ impl Grid {
         
         if top >= bot || left >= right { return; }
         
-        if rows > 0 {
+        if rows < 0 {
             // Scroll up: copy from row+rows to row
-            let scroll = rows as usize;
+            let scroll = (-rows) as usize;
             for row in top..bot {
                 let src_row = row + scroll;
                 for col in left..right {
@@ -156,7 +156,7 @@ impl Grid {
             }
         } else {
             // Scroll down: copy from row-scroll to row (iterate in reverse)
-            let scroll = (-rows) as usize;
+            let scroll = rows as usize;
             for row in (top..bot).rev() {
                 for col in left..right {
                     if row >= top + scroll {

@@ -49,7 +49,7 @@
       -webkit-backdrop-filter: blur(25px) saturate(180%);
       border-top-left-radius: 20px;
       border-top-right-radius: 20px;
-      box-shadow: 0 -10px 40px rgba(0,0,0,0.4);
+      /* box-shadow removed for vanilla experience */
       border-top: 1px solid rgba(255, 255, 255, 0.1);
       display: flex;
       flex-direction: column;
@@ -90,7 +90,7 @@
     }
     .tab-item.active {
         background: #636366; 
-        box-shadow: 0 3px 8px rgba(0,0,0,0.12), 0 3px 1px rgba(0,0,0,0.04);
+        /* box-shadow removed */
     }
     .tab-item:not(.active):hover {
         background: rgba(118, 118, 128, 0.12);
@@ -171,7 +171,7 @@
         background: #fff;
         border-radius: 50%;
         cursor: pointer;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        /* box-shadow removed */
     }
     .setting-val {
         color: #8e8e93;
@@ -317,15 +317,17 @@
     
     #editor-root {
       width: 100vw;
-      height: calc(100vh - 28px);
+      height: calc(100vh - 32px); /* Corrected from 28px */
       /* Reserve space for status drawer */
       outline: none;
+      position: relative;
     }
 
     #nvim {
       display: block;
       width: 100%;
       height: 100%;
+      outline: none !important;
     }
 
     /* Connection Status Indicator (inline in status bar) */
@@ -700,7 +702,7 @@
       font-weight: 600;
       letter-spacing: 0.5px;
       z-index: 10000;
-      box-shadow: 0 2px 12px rgba(243, 156, 18, 0.4);
+      /* box-shadow removed */
       display: flex;
       align-items: center;
       gap: 6px;
@@ -735,7 +737,7 @@
     }
     .share-btn:hover {
       transform: translateY(-1px);
-      box-shadow: 0 2px 8px rgba(137, 180, 250, 0.4);
+      /* box-shadow removed */
     }
     .share-btn:active {
       transform: translateY(0);
@@ -1681,7 +1683,7 @@
       }
       
       #editor-root {
-        padding-top: env(safe-area-inset-top);
+        padding-top: 0;
       }
     }
     

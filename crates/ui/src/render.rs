@@ -115,19 +115,6 @@ impl RenderState {
                 grid.mark_clean();
             }
             
-            // Update VFX (regardless of grid dirty state) - keep animating if returns true
-            // We use frame_time_ms (convert to seconds) as dt
-            let dt = (frame_time / 1000.0) as f32;
-            let vfx_active = self.renderer.update_cursor_vfx(if dt > 0.0 { dt } else { 0.016 });
-            
-            if vfx_active {
-                // Schedule next frame immediately for smooth animation
-                // We bypass needs_render check by setting it true and referencing logic
-                // But we must be careful not to trigger infinite loop if logic logic checks needs_render
-                // Actually, request_render sets needs_render = true.
-                self.request_render();
-            }
-            
             // Update diagnostics overlay if enabled
             if *self.diagnostics_enabled.borrow() {
                 self.update_diagnostics_overlay();

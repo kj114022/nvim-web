@@ -294,6 +294,10 @@ pub fn apply_redraw(grids: &mut GridManager, highlights: &mut HighlightMap, msg:
                                     // mode_info_set: [cursor_style_enabled, mode_info]
                                     // Contains cursor style info per mode - ignored for now
                                 }
+                                Some("win_viewport") => {
+                                    // win_viewport: [grid, win, topline, botline, curline, curcol, line_count, scroll_delta]
+                                    // Used for smooth scrolling and viewport tracking - ignored for now
+                                }
                                 unknown => {
                                     web_sys::console::warn_1(&format!("Unhandled event: {unknown:?}").into());
                                 }

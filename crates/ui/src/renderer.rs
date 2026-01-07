@@ -8,8 +8,8 @@ use crate::highlight::HighlightMap;
 // Default colors (Neovim dark theme)
 const DEFAULT_BG: &str = "#1a1a1a";
 const DEFAULT_FG: &str = "#cccccc";
-// Cursor color
-const CURSOR_COLOR: &str = "#ff6600";
+// Cursor color (Subtle grey for vanilla feel)
+const CURSOR_COLOR: &str = "rgba(204, 204, 204, 0.5)"; 
 
 /// Convert RGB u32 to CSS string
 fn rgb_to_css(rgb: u32) -> String {
@@ -21,9 +21,7 @@ fn rgb_to_css(rgb: u32) -> String {
     )
 }
 
-// NOTE: CursorState and ease_out_quad removed - cursor animation handled by draw_all now
 
-use crate::components::vfx::{CursorVfx, ParticleTrail, TrailMode};
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -33,12 +31,11 @@ pub struct Renderer {
     cell_w: f64,
     cell_h: f64,
     ascent: f64,
+    descent: f64,
     dpr: f64,
     // Color caches to avoid per-cell allocations
     cached_fg: Rc<RefCell<Option<(u32, String)>>>,
     cached_bg: Rc<RefCell<Option<(u32, String)>>>,
-    // VFX
-    pub cursor_vfx: Rc<RefCell<Box<dyn CursorVfx>>>,
 }
 
 impl Renderer {
@@ -84,10 +81,10 @@ impl Renderer {
             cell_w,
             cell_h,
             ascent,
+            descent,
             dpr,
             cached_fg: Rc::new(RefCell::new(None)),
             cached_bg: Rc::new(RefCell::new(None)),
-            cursor_vfx: Rc::new(RefCell::new(Box::new(ParticleTrail::new(TrailMode::Railgun)))),
         }
     }
 
@@ -129,10 +126,8 @@ impl Renderer {
     #[allow(deprecated)]
     #[allow(clippy::cast_precision_loss)]
     pub fn draw_all(&self, grids: &GridManager, highlights: &HighlightMap) {
-        // Only clear canvas if any grid needs full redraw
-        if grids.grids_in_order().any(|g| g.dirty_all) {
-            self.clear_canvas();
-        }
+        // ALWAYS clear canvas to prevent ghosting/multiple cursors
+        self.clear_canvas();
         self.draw_grids(grids, highlights);
         self.draw_cursor(grids);
     }
@@ -160,7 +155,6 @@ impl Renderer {
         let active_id = grids.active_grid_id();
         if let Some(grid) = grids.get(active_id) {
             // In cmdline mode, cursor at (0,0) is incorrect - skip rendering
-            // The cmdline text renders correctly at the bottom without explicit cursor
             if grids.is_cmdline_mode() && grid.cursor_row == 0 && grid.cursor_col == 0 {
                 return;
             }
@@ -171,14 +165,7 @@ impl Renderer {
             let cursor_x = (grid.cursor_col as f64) * self.cell_w + offset_x;
             let cursor_y = (grid.cursor_row as f64) * self.cell_h + offset_y;
             
-            // Render VFX particles
-            let mut vfx = self.cursor_vfx.borrow_mut();
-            vfx.on_move(cursor_x + self.cell_w/2.0, cursor_y + self.cell_h/2.0, self.cell_h, 0.0);
-            
-            // Release borrow for render
-            drop(vfx);
-            self.cursor_vfx.borrow().render(&self.ctx, self.cell_w, self.cell_h, CURSOR_COLOR);
-
+            // Render vanilla block cursor
             self.ctx.set_fill_style(&CURSOR_COLOR.into());
             self.ctx.fill_rect(cursor_x, cursor_y, self.cell_w, self.cell_h);
         }
@@ -201,7 +188,7 @@ impl Renderer {
             for col in 0..grid.cols {
                 let cell = &grid.cells[row * grid.cols + col];
                 // Skip clean cells unless full redraw needed
-                if !grid.dirty_all && !cell.dirty {
+                if false { // Optimization disabled: canvas is cleared every frame
                     continue;
                 }
                 let x = (col as f64).mul_add(self.cell_w, offset_x);
@@ -247,14 +234,13 @@ impl Renderer {
 
             let mut buf = [0u8; 4];
             let s = ch.encode_utf8(&mut buf);
-            let _ = self.ctx.fill_text(s, x, y + self.ascent);
-            let _ = self.ctx.fill_text(s, x, y + self.ascent);
+            // Use top baseline for consistent grid alignment
+            self.ctx.set_text_baseline("top");
+            // Center text within cell height if it's taller than font
+            let y_offset = (self.cell_h - (self.ascent + self.descent)) / 2.0;
+            let _ = self.ctx.fill_text(s, x, y + y_offset);
         }
     }
 
-    /// Update VFX state. Returns true if animation should continue.
-    pub fn update_cursor_vfx(&self, dt: f32) -> bool {
-        self.cursor_vfx.borrow_mut().update(dt)
-    }
 }
 
