@@ -174,15 +174,15 @@ mod tests {
             ("/overlay.txt", b"overlay content"),
             ("/shared.txt", b"from overlay"),
         ]));
-        
+
         let fs = OverlayFs::two_layer(base, overlay);
-        
+
         // Read from base
         assert_eq!(fs.read("/base.txt").await.unwrap(), b"base content");
-        
+
         // Read from overlay
         assert_eq!(fs.read("/overlay.txt").await.unwrap(), b"overlay content");
-        
+
         // Overlay wins for shared
         assert_eq!(fs.read("/shared.txt").await.unwrap(), b"from overlay");
     }
@@ -191,18 +191,18 @@ mod tests {
     async fn test_write_to_top() {
         let base = Arc::new(MemoryFs::with_files(vec![("/readonly.txt", b"base")]));
         let overlay = Arc::new(MemoryFs::new());
-        
+
         let base_dyn: Arc<dyn VfsBackend> = Arc::clone(&base) as Arc<dyn VfsBackend>;
         let overlay_dyn: Arc<dyn VfsBackend> = Arc::clone(&overlay) as Arc<dyn VfsBackend>;
-        
+
         let fs = OverlayFs::two_layer(base_dyn, overlay_dyn);
-        
+
         // Write new file
         fs.write("/new.txt", b"new content").await.unwrap();
-        
+
         // Should be readable
         assert_eq!(fs.read("/new.txt").await.unwrap(), b"new content");
-        
+
         // Should be in overlay, not base
         assert!(overlay.exists("/new.txt").await.unwrap());
         assert!(!base.exists("/new.txt").await.unwrap());
@@ -214,12 +214,11 @@ mod tests {
             ("/dir/a.txt", b"a"),
             ("/dir/b.txt", b"b"),
         ]));
-        let overlay: Arc<dyn VfsBackend> = Arc::new(MemoryFs::with_files(vec![
-            ("/dir/c.txt", b"c"),
-        ]));
-        
+        let overlay: Arc<dyn VfsBackend> =
+            Arc::new(MemoryFs::with_files(vec![("/dir/c.txt", b"c")]));
+
         let fs = OverlayFs::two_layer(base, overlay);
-        
+
         let entries = fs.list("/dir").await.unwrap();
         assert_eq!(entries, vec!["a.txt", "b.txt", "c.txt"]);
     }

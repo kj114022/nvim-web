@@ -55,7 +55,9 @@ impl MemoryFs {
                 let mut current = String::new();
                 for part in &parts[..parts.len().saturating_sub(1)] {
                     current = format!("{current}/{part}");
-                    entries.entry(current.clone()).or_insert(MemoryEntry::Directory);
+                    entries
+                        .entry(current.clone())
+                        .or_insert(MemoryEntry::Directory);
                 }
                 entries.insert(path, MemoryEntry::File(content.to_vec()));
             }
@@ -69,10 +71,10 @@ impl MemoryFs {
         if path.is_empty() || path == "/" {
             return "/".to_string();
         }
-        let path = if path.starts_with('/') { 
-            path.to_string() 
-        } else { 
-            format!("/{path}") 
+        let path = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
         };
         path.trim_end_matches('/').to_string()
     }
@@ -92,7 +94,7 @@ impl MemoryFs {
     }
 
     /// Get file name from path
-    #[allow(dead_code)]  // Utility function for future use
+    #[allow(dead_code)] // Utility function for future use
     fn file_name(path: &str) -> Option<String> {
         let path = Self::normalize_path(path);
         path.rsplit('/').next().map(String::from)
@@ -102,12 +104,17 @@ impl MemoryFs {
     fn ensure_parents(&self, path: &str) -> Result<()> {
         let path = Self::normalize_path(path);
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
         let mut current = String::new();
         for part in &parts[..parts.len().saturating_sub(1)] {
             current = format!("{current}/{part}");
-            entries.entry(current.clone()).or_insert(MemoryEntry::Directory);
+            entries
+                .entry(current.clone())
+                .or_insert(MemoryEntry::Directory);
         }
         Ok(())
     }
@@ -117,8 +124,11 @@ impl MemoryFs {
 impl VfsBackend for MemoryFs {
     async fn read(&self, path: &str) -> Result<Vec<u8>> {
         let path = Self::normalize_path(path);
-        let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
         match entries.get(&path) {
             Some(MemoryEntry::File(data)) => Ok(data.clone()),
             Some(MemoryEntry::Directory) => bail!("Cannot read directory: {path}"),
@@ -129,16 +139,22 @@ impl VfsBackend for MemoryFs {
     async fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         let path = Self::normalize_path(path);
         self.ensure_parents(&path)?;
-        
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         entries.insert(path, MemoryEntry::File(data.to_vec()));
         Ok(())
     }
 
     async fn stat(&self, path: &str) -> Result<FileStat> {
         let path = Self::normalize_path(path);
-        let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
         match entries.get(&path) {
             Some(MemoryEntry::File(data)) => Ok(FileStat::file(data.len() as u64)),
             Some(MemoryEntry::Directory) => Ok(FileStat::dir()),
@@ -148,8 +164,11 @@ impl VfsBackend for MemoryFs {
 
     async fn list(&self, path: &str) -> Result<Vec<String>> {
         let path = Self::normalize_path(path);
-        let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
         // Verify path is a directory
         match entries.get(&path) {
             Some(MemoryEntry::Directory) => {}
@@ -157,9 +176,13 @@ impl VfsBackend for MemoryFs {
             None => bail!("Directory not found: {path}"),
         }
 
-        let prefix = if path == "/" { "/" } else { &format!("{path}/") };
+        let prefix = if path == "/" {
+            "/"
+        } else {
+            &format!("{path}/")
+        };
         let mut results = Vec::new();
-        
+
         for key in entries.keys() {
             if key.starts_with(prefix) && key != &path {
                 let remainder = &key[prefix.len()..];
@@ -169,29 +192,38 @@ impl VfsBackend for MemoryFs {
                 }
             }
         }
-        
+
         results.sort();
         Ok(results)
     }
 
     async fn exists(&self, path: &str) -> Result<bool> {
         let path = Self::normalize_path(path);
-        let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         Ok(entries.contains_key(&path))
     }
 
     async fn create_dir(&self, path: &str) -> Result<()> {
         let path = Self::normalize_path(path);
-        
+
         // Check parent exists
         if let Some(parent) = Self::parent_path(&path) {
-            let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+            let entries = self
+                .entries
+                .read()
+                .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
             if !entries.contains_key(&parent) {
                 bail!("Parent directory does not exist: {parent}");
             }
         }
-        
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         if entries.contains_key(&path) {
             bail!("Already exists: {path}");
         }
@@ -202,17 +234,23 @@ impl VfsBackend for MemoryFs {
     async fn create_dir_all(&self, path: &str) -> Result<()> {
         let path = Self::normalize_path(path);
         self.ensure_parents(&path)?;
-        
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         entries.entry(path).or_insert(MemoryEntry::Directory);
         Ok(())
     }
 
     async fn remove_dir(&self, path: &str) -> Result<()> {
         let path = Self::normalize_path(path);
-        
+
         // Check if empty
-        let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         let prefix = format!("{path}/");
         for key in entries.keys() {
             if key.starts_with(&prefix) {
@@ -220,8 +258,11 @@ impl VfsBackend for MemoryFs {
             }
         }
         drop(entries);
-        
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         match entries.remove(&path) {
             Some(MemoryEntry::Directory) => Ok(()),
             Some(_) => bail!("Not a directory: {path}"),
@@ -231,7 +272,10 @@ impl VfsBackend for MemoryFs {
 
     async fn remove_file(&self, path: &str) -> Result<()> {
         let path = Self::normalize_path(path);
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         match entries.remove(&path) {
             Some(MemoryEntry::File(_)) => Ok(()),
             Some(_) => bail!("Not a file: {path}"),
@@ -242,18 +286,24 @@ impl VfsBackend for MemoryFs {
     async fn copy(&self, src: &str, dest: &str) -> Result<()> {
         let src = Self::normalize_path(src);
         let dest = Self::normalize_path(dest);
-        
+
         let data = {
-            let entries = self.entries.read().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+            let entries = self
+                .entries
+                .read()
+                .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
             match entries.get(&src) {
                 Some(MemoryEntry::File(data)) => data.clone(),
                 Some(MemoryEntry::Directory) => bail!("Cannot copy directory: {src}"),
                 None => bail!("File not found: {src}"),
             }
         };
-        
+
         self.ensure_parents(&dest)?;
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
         entries.insert(dest, MemoryEntry::File(data));
         Ok(())
     }
@@ -261,11 +311,16 @@ impl VfsBackend for MemoryFs {
     async fn rename(&self, src: &str, dest: &str) -> Result<()> {
         let src = Self::normalize_path(src);
         let dest = Self::normalize_path(dest);
-        
+
         self.ensure_parents(&dest)?;
-        
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        let entry = entries.remove(&src).ok_or_else(|| anyhow::anyhow!("Not found: {src}"))?;
+
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        let entry = entries
+            .remove(&src)
+            .ok_or_else(|| anyhow::anyhow!("Not found: {src}"))?;
         entries.insert(dest, entry);
         Ok(())
     }
@@ -304,7 +359,7 @@ impl ReadHandle for MemoryReadHandle {
         const CHUNK_SIZE: usize = 64 * 1024;
         let remaining = self.data.len().saturating_sub(self.offset);
         let chunk_size = remaining.min(CHUNK_SIZE);
-        
+
         let chunk = ReadChunk {
             data: self.data[self.offset..self.offset + chunk_size].to_vec(),
             offset: self.offset as u64,
@@ -348,8 +403,14 @@ impl WriteHandle for MemoryWriteHandle {
     }
 
     async fn close(&mut self) -> Result<()> {
-        let mut entries = self.entries.write().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
-        entries.insert(self.path.clone(), MemoryEntry::File(std::mem::take(&mut self.buffer)));
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+        entries.insert(
+            self.path.clone(),
+            MemoryEntry::File(std::mem::take(&mut self.buffer)),
+        );
         Ok(())
     }
 
@@ -365,19 +426,19 @@ mod tests {
     #[tokio::test]
     async fn test_basic_operations() {
         let fs = MemoryFs::new();
-        
+
         // Write
         fs.write("/test.txt", b"Hello").await.unwrap();
-        
+
         // Read
         let data = fs.read("/test.txt").await.unwrap();
         assert_eq!(data, b"Hello");
-        
+
         // Stat
         let stat = fs.stat("/test.txt").await.unwrap();
         assert!(stat.is_file);
         assert_eq!(stat.size, 5);
-        
+
         // Exists
         assert!(fs.exists("/test.txt").await.unwrap());
         assert!(!fs.exists("/nonexistent").await.unwrap());
@@ -386,17 +447,17 @@ mod tests {
     #[tokio::test]
     async fn test_directory_operations() {
         let fs = MemoryFs::new();
-        
+
         // Create directory
         fs.create_dir("/mydir").await.unwrap();
-        
+
         // Write file in directory
         fs.write("/mydir/file.txt", b"content").await.unwrap();
-        
+
         // List directory
         let entries = fs.list("/mydir").await.unwrap();
         assert_eq!(entries, vec!["file.txt"]);
-        
+
         // List root
         let root = fs.list("/").await.unwrap();
         assert!(root.contains(&"mydir".to_string()));
@@ -405,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn test_streaming() {
         let fs = MemoryFs::new();
-        
+
         // Write via streaming
         {
             let mut writer = fs.open_write("/stream.txt").await.unwrap();
@@ -413,12 +474,12 @@ mod tests {
             writer.write_chunk(b"World!").await.unwrap();
             writer.close().await.unwrap();
         }
-        
+
         // Read via streaming
         {
             let mut reader = fs.open_read("/stream.txt").await.unwrap();
             assert_eq!(reader.size(), Some(13));
-            
+
             let chunk = reader.read_chunk().await.unwrap();
             assert_eq!(chunk.data, b"Hello, World!");
             assert!(chunk.is_last);
@@ -432,7 +493,7 @@ mod tests {
             ("/dir/b.txt", b"B"),
             ("/dir/sub/c.txt", b"C"),
         ]);
-        
+
         assert_eq!(fs.read("/a.txt").await.unwrap(), b"A");
         assert_eq!(fs.read("/dir/b.txt").await.unwrap(), b"B");
         assert_eq!(fs.read("/dir/sub/c.txt").await.unwrap(), b"C");

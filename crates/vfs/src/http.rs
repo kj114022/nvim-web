@@ -47,7 +47,11 @@ impl HttpFsBackend {
         if path.starts_with("http://") || path.starts_with("https://") {
             path.to_string()
         } else if let Some(base) = &self.base_url {
-            format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
+            format!(
+                "{}/{}",
+                base.trim_end_matches('/'),
+                path.trim_start_matches('/')
+            )
         } else {
             format!("https://{path}")
         }
@@ -64,8 +68,9 @@ impl Default for HttpFsBackend {
 impl VfsBackend for HttpFsBackend {
     async fn read(&self, path: &str) -> Result<Vec<u8>> {
         let url = self.resolve_url(path);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -89,9 +94,10 @@ impl VfsBackend for HttpFsBackend {
 
     async fn stat(&self, path: &str) -> Result<FileStat> {
         let url = self.resolve_url(path);
-        
+
         // HEAD request to get metadata
-        let response = self.client
+        let response = self
+            .client
             .head(&url)
             .send()
             .await

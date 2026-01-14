@@ -270,7 +270,10 @@ impl SshFsBackend {
     fn authenticate_with_password(session: &Session, parsed: &ParsedSsh) -> Result<()> {
         // Try password first if provided (expose secret only at auth time)
         if let Some(ref password) = parsed.password {
-            if session.userauth_password(&parsed.user, password.expose_secret()).is_ok() {
+            if session
+                .userauth_password(&parsed.user, password.expose_secret())
+                .is_ok()
+            {
                 eprintln!("  [ssh] Authenticated with password");
                 return Ok(());
             }
@@ -371,9 +374,9 @@ impl VfsBackend for SshFsBackend {
             is_dir: stat.is_dir(),
             size: stat.size.unwrap_or(0),
             created: None, // SFTP doesn't provide creation time
-            modified: stat.mtime.map(|t| {
-                std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)
-            }),
+            modified: stat
+                .mtime
+                .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t)),
             readonly: false,
         })
     }

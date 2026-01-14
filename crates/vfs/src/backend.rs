@@ -58,10 +58,10 @@ pub struct ReadChunk {
 pub trait ReadHandle: Send + Sync {
     /// Read next chunk (default chunk size is backend-dependent)
     async fn read_chunk(&mut self) -> Result<ReadChunk>;
-    
+
     /// Get total file size (if known)
     fn size(&self) -> Option<u64>;
-    
+
     /// Close the handle
     async fn close(&mut self) -> Result<()>;
 }
@@ -73,10 +73,10 @@ pub trait ReadHandle: Send + Sync {
 pub trait WriteHandle: Send + Sync {
     /// Write a chunk of data
     async fn write_chunk(&mut self, data: &[u8]) -> Result<()>;
-    
+
     /// Flush and close the handle
     async fn close(&mut self) -> Result<()>;
-    
+
     /// Get bytes written so far
     fn bytes_written(&self) -> u64;
 }
@@ -163,4 +163,3 @@ pub trait VfsBackend: Send + Sync {
         false
     }
 }
-
