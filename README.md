@@ -1,153 +1,122 @@
 # nvim-web
 
-Neovim in the browser. Runs the actual Neovim binary on a host machine and renders via WebAssembly over WebSocket/WebTransport. Your config, plugins, LSP, and Treesitter work exactly as in a native session.
+**Neovim in the browser.** No emulation, no compromises.
+Runs your actual Neovim binary on a host machine and renders pixel-perfectly via WebAssembly.
 
-## Features
+---
 
-| Feature | Description |
-|---------|-------------|
-| **Full Neovim** | Your config, plugins, LSP, Treesitter all work |
-| **Real-time Collaboration** | CRDT-based editing via y-crdt |
-| **WebTransport** | QUIC/HTTP3 for sub-50ms latency |
-| **Enterprise SSO** | OIDC with Google, Okta, Azure AD |
-| **Kubernetes** | Pod-per-session horizontal scaling |
-| **Virtual Filesystems** | Local, SSH, GitHub, Browser, Git, SFTP |
-| **Terminal PTY** | Full terminal emulator via xterm.js |
-| **Universal Tool Pipe** | Any CLI tool (claude, gemini, prettier) |
-| **Hot Backend Swap** | Docker/SSH/TCP without losing state |
-| **P2P Chat** | Browser-to-browser encrypted messaging |
-| **Bazel Build** | Hermetic builds with rules_rust |
+## 🚀 Why nvim-web?
 
-## Quick Start
+- **Zero Latency**: Uses WebTransport/QUIC for sub-50ms keystrokes.
+- **Real Neovim**: Uses your existing config (`init.lua`), plugins, LSP, and Treesitter.
+- **Collaborative**: Google Docs-style real-time editing with other users.
+- **Secure**: OIDC authentication (Google, GitHub, Okta) and isolated sandboxing.
+- **Universal**: Access your dev environment from any device (iPad, Chromebook, Laptop).
 
+## ⚡ Quick Start
+
+### 1. Install the Server
 ```bash
 cargo install --git https://github.com/kj114022/nvim-web nvim-web-host
+```
+
+### 2. Run it
+```bash
 nvim-web
 ```
 
+### 3. Connect
 Open `http://localhost:8080` in your browser.
 
-## Installation
+---
 
-### From Source
+## 📦 Installation
 
+### macOS (Homebrew)
 ```bash
-git clone https://github.com/kj114022/nvim-web && cd nvim-web
-cargo build --release -p nvim-web-host
+brew install --build-from-source packaging/homebrew/homebrew.rb
 ```
 
-### Bazel Build
-
+### Ubuntu / Debian
 ```bash
-CARGO_BAZEL_REPIN=1 bazel sync --only=crate_index
-bazel build //...
+wget https://github.com/kj114022/nvim-web/releases/download/v0.9.9/nvim-web_0.9.9_amd64.deb
+sudo dpkg -i nvim-web_0.9.9_amd64.deb
 ```
 
-### Package Managers
-
-| Platform | Command |
-|----------|---------|
-| **macOS** | `brew install --build-from-source packaging/nvim-web.rb` |
-| **Ubuntu/Debian** | `sudo dpkg -i nvim-web_0.9.9_amd64.deb` |
-| **Ubuntu Snap** | `sudo snap install nvim-web` |
-| **Fedora/RHEL** | `sudo dnf install nvim-web-0.9.9-1.x86_64.rpm` |
-| **Arch Linux** | `cd packaging/arch && makepkg -si` |
-| **NixOS** | `nix build github:kj114022/nvim-web#nvim-web` |
-| **Flatpak** | `flatpak install com.github.kj114022.nvim-web` |
-| **Docker** | `docker run -p 8080:8080 ghcr.io/kj114022/nvim-web` |
-
-## Usage
-
+### Fedora / RHEL
 ```bash
-nvim-web                              # Start server on :8080
-nvim-web --port 3000 --bind 0.0.0.0   # Custom port, network access
-nvim-web open /path/to/project        # Open project
-nvim-web open github.com/user/repo    # Clone and open GitHub repo
+sudo dnf install nvim-web-0.9.9-1.x86_64.rpm
 ```
 
-### Universal Tool Pipe
+### Docker
+```bash
+docker run -p 8080:8080 -v $HOME/.config/nvim:/root/.config/nvim ghcr.io/kj114022/nvim-web
+```
 
+---
+
+## ⚙️ Configuration
+
+The server looks for a config file in:
+- Linux: `~/.config/nvim-web/config.toml`
+- macOS: `~/Library/Application Support/nvim-web/config.toml`
+
+**Example `config.toml`:**
+```toml
+[server]
+bind = "0.0.0.0"
+port = 8080
+
+[auth]
+# Enable Google Login
+provider = "google"
+client_id = "..."
+client_secret = "..."
+
+[session]
+# Persist sessions for 24 hours
+timeout = 86400
+```
+
+---
+
+## 🎮 Usage Guide
+
+### Opening Projects
+Run `nvim-web open` to start a session in a specific directory:
+```bash
+nvim-web open ~/code/my-project
+```
+
+### Remote Git Repositories
+You can open a GitHub repo directly without cloning it locally first:
+```bash
+nvim-web open github.com/rust-lang/rust
+```
+
+### The "Universal Pipe"
+One of nvim-web's most powerful features is the ability to pipe local browser tools into the remote Neovim instance.
+
+**Example: Use a local LLM to fix code**
 ```lua
--- Execute any CLI tool from Neovim
-:ToolExec claude -p "explain this code"
-:ToolExec prettier --stdin-filepath %
-
--- Lua API
-local pipe = require("nvim-web.pipe")
-pipe.exec("gemini", {"--prompt", "fix"}, selection)
+-- In Neovim
+:ToolExec local-llm --prompt "Fix this bug" %
 ```
 
-### Backend Swap
+---
 
-Seamlessly switch backends without losing state:
+## ⌨️ Keybindings
 
-| Backend | URL Format |
-|---------|------------|
-| Local | `local` |
-| Docker | `docker:container-name` |
-| SSH | `ssh://user@host:port` |
-| TCP | `tcp://host:port` |
+- **`Cmd/Ctrl + P`**: Open file finder (native).
+- **`Cmd/Ctrl + Shift + F`**: Global search (ripgrep).
+- **`Alt + Click`**: Multi-cursor support.
 
-### VFS Swap
+---
 
-Switch filesystems on the fly:
+## 🤝 Contributing
 
-| VFS | URL Format |
-|-----|------------|
-| Local | `local:/path/to/dir` |
-| Git | `git:https://github.com/user/repo.git@branch` |
-| GitHub | `github:owner/repo@ref` |
-| Browser | `browser:session-id` |
-| SFTP | `sftp://user@host:/path` |
+We love contributors! Please read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
-## Architecture
-
-```
-Browser (WASM)              nvim-web Host                Neovim
-┌──────────────┐           ┌─────────────────┐          ┌──────────┐
-│ Renderer     │◄─────────►│ WebSocket/QUIC  │◄────────►│ --embed  │
-│ Input        │  msgpack  │ VFS / CRDT      │  RPC     │ process  │
-│ P2P Chat     │           │ Pipe / Swap     │          │          │
-└──────────────┘           └─────────────────┘          └──────────┘
-```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [architecture.md](docs/architecture.md) | Codebase structure |
-| [webtransport.md](docs/webtransport.md) | QUIC configuration |
-| [collaboration.md](docs/collaboration.md) | Real-time editing |
-| [authentication.md](docs/authentication.md) | OIDC setup |
-| [kubernetes.md](docs/kubernetes.md) | K8s deployment |
-
-## Project Structure
-
-```
-nvim-web/
-├── crates/
-│   ├── host/           # Server: transport, pipe, swap, terminal
-│   ├── ui/             # WASM: renderer, p2p chat, prediction
-│   ├── vfs/            # VFS: local, ssh, github, git
-│   └── protocol/       # Shared message types
-├── WORKSPACE           # Bazel workspace
-├── k8s/                # Kubernetes manifests
-└── packaging/          # deb, rpm, arch, nix, snap, flatpak
-```
-
-## Development
-
-```bash
-cargo build                              # Build all
-cargo test                               # Run tests (76 tests)
-RUST_LOG=debug cargo run -p nvim-web-host  # Run with logging
-cargo fmt && cargo clippy                # Format and lint
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
+## 📄 License
 
 MIT
