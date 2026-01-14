@@ -5,7 +5,7 @@
 # 2. Or install directly: brew install --build-from-source ./nvim-web.rb
 
 class NvimWeb < Formula
-  desc "Neovim in the Browser - Real Neovim via WebSocket"
+  desc "Neovim in the Browser - Real Neovim via WebSocket/WebTransport"
   homepage "https://github.com/kj114022/nvim-web"
   url "https://github.com/kj114022/nvim-web/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
@@ -18,6 +18,9 @@ class NvimWeb < Formula
     # Build from workspace root
     system "cargo", "build", "--release", "-p", "nvim-web-host"
     bin.install "target/release/nvim-web-host" => "nvim-web"
+
+    # Install example config
+    etc.install "config.example.toml" => "nvim-web/config.example.toml"
   end
 
   def caveats
@@ -31,6 +34,18 @@ class NvimWeb < Formula
 
       To open a project directly:
         nvim-web open /path/to/project
+
+      Features:
+      - WebSocket and WebTransport (QUIC) connections
+      - Real-time collaborative editing (CRDTs)
+      - OIDC authentication support
+      - Kubernetes pod-per-session scaling
+
+      Configuration:
+        #{etc}/nvim-web/config.example.toml
+
+      Documentation:
+        https://github.com/kj114022/nvim-web/tree/main/docs
     EOS
   end
 

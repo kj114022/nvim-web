@@ -1,0 +1,42 @@
+# WinGet manifest for nvim-web
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.4.0.schema.json
+
+PackageIdentifier: kj114022.nvim-web
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: nvim-web contributors
+PublisherUrl: https://github.com/kj114022
+Author: nvim-web contributors
+PackageName: nvim-web
+PackageUrl: https://github.com/kj114022/nvim-web
+License: MIT
+LicenseUrl: https://github.com/kj114022/nvim-web/blob/main/LICENSE
+ShortDescription: Neovim in the Browser - Real Neovim via WebSocket/WebTransport
+Description: |
+  nvim-web runs the actual Neovim binary on a host machine and renders
+  its output in a WebAssembly-based UI over WebSocket/WebTransport.
+
+  Features:
+  - Full Neovim compatibility (your config, plugins, LSP work)
+  - Real-time collaborative editing (CRDTs)
+  - WebTransport/QUIC support for lower latency
+  - OIDC/BeyondCorp authentication
+  - Kubernetes pod-per-session scaling
+Tags:
+  - neovim
+  - editor
+  - terminal
+  - browser
+  - wasm
+  - collaboration
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/kj114022/nvim-web/releases/download/v0.1.0/nvim-web-windows-x86_64.zip
+    InstallerSha256: PLACEHOLDER_SHA256
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: nvim-web.exe
+        PortableCommandAlias: nvim-web
+ManifestType: singleton
+ManifestVersion: 1.4.0

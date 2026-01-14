@@ -1,0 +1,52 @@
+name: nvim-web
+base: core22
+version: '0.1.0'
+summary: Neovim in the Browser
+description: |
+  nvim-web runs the actual Neovim binary on a host machine and renders
+  its output in a WebAssembly-based UI over WebSocket/WebTransport.
+
+  Features:
+  - Full Neovim compatibility (your config, plugins, LSP work)
+  - Real-time collaborative editing (CRDTs)
+  - WebTransport/QUIC support for lower latency
+  - OIDC/BeyondCorp authentication
+  - Kubernetes pod-per-session scaling
+
+grade: stable
+confinement: strict
+
+apps:
+  nvim-web:
+    command: bin/nvim-web
+    plugs:
+      - network
+      - network-bind
+      - home
+      - removable-media
+
+parts:
+  neovim:
+    plugin: nil
+    stage-packages:
+      - neovim
+      - ripgrep
+      - git
+
+  nvim-web:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages:
+      - pkg-config
+      - libssl-dev
+    override-build: |
+      cargo build --release -p nvim-web-host
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+      cp target/release/nvim-web-host $SNAPCRAFT_PART_INSTALL/bin/nvim-web
+      mkdir -p $SNAPCRAFT_PART_INSTALL/etc/nvim-web
+      cp config.example.toml $SNAPCRAFT_PART_INSTALL/etc/nvim-web/
+
+layout:
+  /etc/nvim-web:
+    bind: $SNAP/etc/nvim-web
