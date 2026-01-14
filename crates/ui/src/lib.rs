@@ -8,6 +8,7 @@ mod opfs;
 mod render;
 mod renderer;
 mod worker;
+pub mod crdt;
 
 use std::cell::RefCell;
 use std::rc::Rc;

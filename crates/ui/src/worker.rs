@@ -4,6 +4,7 @@
 use crate::grid::GridManager;
 use crate::highlight::HighlightMap;
 use crate::input_queue::InputQueue;
+use crate::crdt::CrdtClient; // Import CRDT client
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -95,6 +96,7 @@ fn start_worker(
         // 2. Initialize State
         let grids = Rc::new(RefCell::new(GridManager::new()));
         let highlights = Rc::new(RefCell::new(HighlightMap::new()));
+        let crdt_client = Rc::new(RefCell::new(CrdtClient::new(1))); // Buffer 1 default
         grids.borrow_mut().resize_grid(1, rows, cols);
 
         let renderer_rc = Rc::new(RefCell::new(renderer));
@@ -113,7 +115,7 @@ fn start_worker(
         let input_queue = InputQueue::new(ws.clone());
 
         // 5. Setup WebSocket Handlers
-        setup_websocket_handlers(&ws, grids.clone(), highlights.clone(), renderer_rc.clone());
+        setup_websocket_handlers(&ws, grids.clone(), highlights.clone(), renderer_rc.clone(), crdt_client.clone());
 
         // 6. Setup Main Thread Message Handler
         setup_main_thread_handler(input_queue.clone(), renderer_rc.clone(), grids.clone());
@@ -133,6 +135,7 @@ fn setup_websocket_handlers(
     grids: Rc<RefCell<GridManager>>,
     highlights: Rc<RefCell<HighlightMap>>,
     renderer: Rc<RefCell<crate::renderer::Renderer>>,
+    crdt: Rc<RefCell<CrdtClient>>,
 ) {
     let ws_clone = ws.clone();
 
@@ -148,6 +151,7 @@ fn setup_websocket_handlers(
     let grids_msg = grids.clone();
     let highlights_msg = highlights.clone();
     let renderer_msg = renderer.clone();
+    let crdt_msg = crdt.clone(); // Capture for closure
     let ws_msg = ws_clone.clone();
 
     let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
@@ -159,14 +163,15 @@ fn setup_websocket_handlers(
             if let Ok(msg) = rmpv::decode::read_value(&mut cursor) {
                 let grids = grids_msg.clone();
                 let highlights = highlights_msg.clone();
-                let renderer = renderer_msg.clone();
-                let ws = ws_msg.clone();
+                    let renderer = renderer_msg.clone();
+                    let ws = ws_msg.clone();
+                    let crdt = crdt_msg.clone(); // Clone for async
 
-                spawn_local(async move {
-                    // Use legacy handler for now - we can refactor later
-                    // handle_message expects RenderState, so we adapt
-                    process_neovim_message(msg, grids, highlights, renderer, ws);
-                });
+                    spawn_local(async move {
+                        // Use legacy handler for now - we can refactor later
+                        // handle_message expects RenderState, so we adapt
+                        process_neovim_message(msg, grids, highlights, renderer, crdt, ws);
+                    });
             }
         }
     }) as Box<dyn FnMut(MessageEvent)>);
@@ -204,6 +209,7 @@ fn process_neovim_message(
     grids: Rc<RefCell<GridManager>>,
     highlights: Rc<RefCell<HighlightMap>>,
     _renderer: Rc<RefCell<crate::renderer::Renderer>>,
+    crdt: Rc<RefCell<CrdtClient>>,
     _ws: WebSocket,
 ) {
     // Parse Neovim RPC message
@@ -401,6 +407,62 @@ fn process_neovim_message(
                             }
                         }
                     }
+                    "crdt_sync" => {
+                        // Handle CRDT sync messages
+                        // Payload: [{"type": "sync1", ...}]
+                        if let rmpv::Value::Array(args) = params {
+                             if let Some(msg_map) = args.first() {
+                                 // Simple manual parsing of the map to avoid complex deserialization logic here
+                                 if let rmpv::Value::Map(kvs) = msg_map {
+                                     let mut type_str = "";
+                                     let mut binary_data: Option<Vec<u8>> = None;
+
+                                     for (k, v) in kvs {
+                                         if let rmpv::Value::String(s) = k {
+                                             if s.as_str() == Some("type") {
+                                                 if let rmpv::Value::String(ts) = v {
+                                                     type_str = ts.as_str().unwrap_or("");
+                                                 }
+                                             } else if s.as_str() == Some("update") || s.as_str() == Some("state_vector") {
+                                                  // Both fields are byte arrays (Vec<u8>)
+                                                  if let rmpv::Value::Binary(bin) = v {
+                                                      binary_data = Some(bin.clone());
+                                                  } else if let rmpv::Value::Array(ints) = v {
+                                                      // Sometimes RMP decodes bin as array of ints
+                                                      let vec: Vec<u8> = ints.iter().filter_map(|x| x.as_u64().map(|b| b as u8)).collect();
+                                                      binary_data = Some(vec);
+                                                  }
+                                             }
+                                         }
+                                     }
+
+                                     if let Some(data) = binary_data {
+                                         let mut client = crdt.borrow_mut();
+                                         match type_str {
+                                             "sync1" => {
+                                                  // Host asking for our state vector? Usually client sends sync1 first.
+                                                  // But if host sends sync1, we reply with sync2?
+                                                  // Typically: Client connects -> Client sends Sync1.
+                                                  // Host replies Sync2.
+                                                  // If Host sends Sync1, it wants to pull our state.
+                                             }
+                                             "sync2" => {
+                                                  // Host sent updates
+                                                  let _ = client.apply_update(&data);
+                                                  web_sys::console::log_1(&"[CRDT] Applied SyncStep2 update".into());
+                                             }
+                                             "update" => {
+                                                  // Incremental update
+                                                  let _ = client.apply_update(&data);
+                                                  // web_sys::console::log_1(&"[CRDT] Applied incremental update".into());
+                                             }
+                                             _ => {}
+                                         }
+                                     }
+                                 }
+                             }
+                        }
+                    }
                     "nvim_web_action" => {
                         // Custom action protocol: [action_name, args...]
                         if let rmpv::Value::Array(args) = params {
@@ -574,6 +636,7 @@ pub fn perform_hot_swap(
     grids: &Rc<RefCell<GridManager>>,
     highlights: &Rc<RefCell<HighlightMap>>,
     renderer: &Rc<RefCell<crate::renderer::Renderer>>,
+    crdt: &Rc<RefCell<CrdtClient>>,
 ) {
     web_sys::console::log_1(&format!("[Worker] Hot swap to: {}", new_ws_url).into());
 
@@ -589,7 +652,7 @@ pub fn perform_hot_swap(
     new_ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
     // 2. Setup handlers on new WebSocket
-    setup_websocket_handlers(&new_ws, grids.clone(), highlights.clone(), renderer.clone());
+    setup_websocket_handlers(&new_ws, grids.clone(), highlights.clone(), renderer.clone(), crdt.clone());
 
     // 3. Swap WebSocket in input queue (preserves queued messages)
     input_queue.replace_websocket(new_ws.clone());

@@ -1,5 +1,0 @@
-# Empty Cargo.Bazel.lock file
-# This file is populated by running:
-#   CARGO_BAZEL_REPIN=1 bazel sync --only=crate_index
-#
-# After initial sync, this file must be committed to version control.

@@ -1,5 +1,18 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = initTreeSitter)]
+    pub async fn init_tree_sitter();
+
+    #[wasm_bindgen(js_name = loadLanguage)]
+    pub async fn load_language(lang: &str, path: &str);
+
+    #[wasm_bindgen(js_name = parseCode)]
+    pub fn parse_code(code: &str, lang: &str) -> String;
+}
 
 /// Highlight attributes from `hl_attr_define`
 #[derive(Clone, Default)]

@@ -54,10 +54,15 @@ sudo dnf install nvim-web-0.9.9-1.x86_64.rpm
 docker run -p 8080:8080 -v $HOME/.config/nvim:/root/.config/nvim ghcr.io/kj114022/nvim-web
 ```
 
-### Hermetic Build (Bazel)
-For enterprise environments requiring reproducible builds:
+### Simplified Build (Makefile)
+For a streamlined development workflow:
 ```bash
-bazel build //crates/host:nvim-web-host --compilation_mode=opt
+make build
+```
+This compiles both the host and the WASM frontend.
+Run tests with:
+```bash
+make test
 ```
 
 ---
@@ -202,6 +207,11 @@ For specific workflows, install the browser extension located in `extension/`:
 - **`Cmd/Ctrl + Shift + F`**: Global Project Search (Host-side).
 - **`Alt + Click`**: Spawn multiple cursors (Multicursor engine).
 - **`Ctrl + ~`**: Toggle Integrated Terminal panel.
+
+### Development Workflow
+- Edit code in `crates/...`
+- Run `make build` to verify changes.
+- Use `cargo check` locally for fast feedback.
 
 ---
 

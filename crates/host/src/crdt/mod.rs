@@ -8,7 +8,8 @@ mod buffer;
 mod sync;
 
 pub use buffer::BufferCrdt;
-pub use sync::{CrdtSync, SyncMessage};
+pub use sync::CrdtSync;
+pub use nvim_web_protocol::crdt::SyncMessage;
 
 use std::collections::HashMap;
 use std::sync::Arc;

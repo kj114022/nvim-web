@@ -4,6 +4,7 @@
 
 pub mod messages;
 pub mod rpc;
+pub mod crdt;
 
 pub use messages::*;
 pub use rpc::*;

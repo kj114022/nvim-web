@@ -1,10 +1,10 @@
 [package]
 name = "nvim-web-ui"
 description = "Neovim in the Browser - WASM UI frontend"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.9.9"
+edition = "2021"
+license = "MIT"
+authors = ["Tourist"]
 
 [lib]
 crate-type = ["cdylib"]
@@ -21,6 +21,9 @@ wgpu = { version = "23", features = ["webgl"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 pollster = "0.3"
 console_error_panic_hook = "0.1"
+base64ct = "=1.6.0" # Pin to avoid edition2024 requirement
+yrs = { version = "0.21" }
+
 
 [dependencies.web-sys]
 workspace = true
