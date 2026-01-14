@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
     git \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Neovim v0.10.0 (Debian package is too old)
@@ -37,7 +38,13 @@ RUN curl -LO https://github.com/neovim/neovim/releases/download/v0.10.0/nvim-lin
 COPY --from=builder /app/target/release/nvim-web-host /usr/local/bin/
 
 # Expose ports
-EXPOSE 8080 9001
+# 8080: HTTP/WebSocket
+# 9001: Terminal WebSocket
+# 9002: WebTransport (QUIC)
+EXPOSE 8080 9001 9002
+
+# Create data directory
+RUN mkdir -p /data
 
 # Run as non-root user
 RUN useradd -m nvim

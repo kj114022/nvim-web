@@ -1,0 +1,42 @@
+# BUILD.bazel for nvim-web-ui crate
+# WASM frontend for browser
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//wasm_bindgen:wasm_bindgen.bzl", "rust_wasm_bindgen")
+load("@crate_index//:defs.bzl", "all_crate_deps")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "nvim_web_ui",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "nvim_web_ui",
+    crate_type = "cdylib",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+    ),
+    deps = all_crate_deps(
+        normal = True,
+    ) + [
+        "//crates/protocol:nvim_web_protocol",
+    ],
+)
+
+# WASM bindgen for browser compatibility
+rust_wasm_bindgen(
+    name = "wasm_pkg",
+    target = "web",
+    wasm_file = ":nvim_web_ui",
+)
+
+# Static assets for serving
+filegroup(
+    name = "static_assets",
+    srcs = glob([
+        "*.html",
+        "*.css",
+        "*.js",
+        "ts/**/*.ts",
+    ]),
+)

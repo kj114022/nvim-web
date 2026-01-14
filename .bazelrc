@@ -1,0 +1,34 @@
+# .bazelrc - Bazel configuration for nvim-web
+
+# Build with optimizations by default
+build --compilation_mode=opt
+
+# Enable colored output
+common --color=yes
+
+# Use remote cache if available
+build --remote_cache=grpcs://remotebuildexecution.googleapis.com
+build --google_default_credentials
+
+# Rust-specific settings
+build --@rules_rust//rust/settings:experimental_per_crate_rustc_flags=true
+
+# WASM settings
+build:wasm --platforms=@rules_rust//rust/platform:wasm
+
+# Test settings
+test --test_output=errors
+test --test_summary=short
+
+# CI mode - stricter settings
+build:ci --disk_cache=
+build:ci --noremote_cache
+test:ci --test_output=all
+
+# Development mode - faster builds
+build:dev --compilation_mode=fastbuild
+build:dev --strip=never
+
+# Release mode - full optimizations
+build:release --compilation_mode=opt
+build:release --strip=always

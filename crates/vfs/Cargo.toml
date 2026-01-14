@@ -19,10 +19,9 @@ ssh2 = "0.9"
 rmpv.workspace = true
 lazy_static.workspace = true
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
-secrecy = { version = "0.8", features = ["serde"] } 
-
-[lints]
-workspace = true
+secrecy = { version = "0.8", features = ["serde"] }
+octocrab = "0.44"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
