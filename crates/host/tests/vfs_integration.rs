@@ -58,10 +58,15 @@ async fn vfs_manager_parses_paths_correctly() {
 
     let harness = TestHarness::new().unwrap();
     let manager = VfsManager::new();
-    manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path()))).await;
+    manager
+        .register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())))
+        .await;
 
     // Parse a VFS path
-    let (backend, path) = manager.parse_vfs_path("vfs://local/test/file.txt").await.unwrap();
+    let (backend, path) = manager
+        .parse_vfs_path("vfs://local/test/file.txt")
+        .await
+        .unwrap();
     assert_eq!(backend, "local");
     assert_eq!(path, "test/file.txt");
 }
@@ -75,7 +80,9 @@ async fn vfs_manager_reads_via_backend() {
     harness.write_file("readme.txt", "VFS content").unwrap();
 
     let manager = VfsManager::new();
-    manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path()))).await;
+    manager
+        .register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())))
+        .await;
 
     // Read via manager
     let content = manager.read_file("vfs://local/readme.txt").await.unwrap();
@@ -90,7 +97,9 @@ async fn vfs_manager_writes_via_backend() {
     let harness = TestHarness::new().unwrap();
 
     let manager = VfsManager::new();
-    manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path()))).await;
+    manager
+        .register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())))
+        .await;
 
     // Write via manager
     manager
@@ -110,7 +119,9 @@ async fn vfs_manager_tracks_buffers() {
 
     let harness = TestHarness::new().unwrap();
     let manager = VfsManager::new();
-    manager.register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path()))).await;
+    manager
+        .register_backend("local", Box::new(LocalFs::new(harness.tmp_dir.path())))
+        .await;
 
     // Register a buffer
     manager

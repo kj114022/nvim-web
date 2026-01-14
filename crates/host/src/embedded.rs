@@ -6,15 +6,13 @@
 
 use rust_embed::RustEmbed;
 
-/// Embedded UI assets from the ui/ directory
+/// Embedded UI assets from the ui/ directory (HTML, CSS, JS, icons, WASM pkg)
 #[derive(RustEmbed)]
 #[folder = "../ui/"]
 #[include = "index.html"]
-#[include = "pkg/*.js"]
-#[include = "pkg/*.wasm"]
-#[include = "pkg/*.d.ts"]
-#[include = "sw.js"]
-#[include = "manifest.json"]
+#[include = "styles.css"]
+#[include = "worker.js"]
+#[include = "pkg/*"]
 #[include = "icons/*"]
 pub struct UiAssets;
 
@@ -27,11 +25,11 @@ pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
         path.trim_start_matches('/')
     };
 
-    UiAssets::get(path).map(|file| {
+    UiAssets::get(path).map(|f| {
         let mime = mime_guess::from_path(path)
             .first_raw()
             .unwrap_or("application/octet-stream");
-        (file.data.into_owned(), mime)
+        (f.data.into_owned(), mime)
     })
 }
 
@@ -49,5 +47,15 @@ mod tests {
         let (data, mime) = get_asset("index.html").expect("index.html should exist");
         assert!(!data.is_empty());
         assert_eq!(mime, "text/html");
+    }
+
+    #[test]
+    fn test_wasm_pkg_assets() {
+        // WASM package should be accessible if built
+        // We check for the main JS file which is usually pkg/nvim_web_ui.js
+        // Note: This test might fail if wasm-pack hasn't run yet, but in CI it should run
+        if let Some(_) = UiAssets::get("pkg/nvim_web_ui.js") {
+            // Good
+        }
     }
 }

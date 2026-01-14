@@ -1,7 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TakeoverMode {
     Always,
@@ -32,6 +31,12 @@ pub struct ContextManager {
     rules: Vec<(Regex, SiteConfig)>,
 }
 
+impl Default for ContextManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextManager {
     pub fn new() -> Self {
         let mut rules = Vec::new();
@@ -40,19 +45,25 @@ impl ContextManager {
         // Firenvim uses .* for defaults, and specific regexes for overrides.
         // We hardcode some defaults here for the "Best Nvim Ever" experience.
         if let Ok(re) = Regex::new(r"github\.com.*") {
-            rules.push((re, SiteConfig {
-                filetype: "markdown".to_string(),
-                takeover: TakeoverMode::Always,
-                cmdline: "neovim".to_string(),
-            }));
+            rules.push((
+                re,
+                SiteConfig {
+                    filetype: "markdown".to_string(),
+                    takeover: TakeoverMode::Always,
+                    cmdline: "neovim".to_string(),
+                },
+            ));
         }
 
-         if let Ok(re) = Regex::new(r"gmail\.com.*") {
-            rules.push((re, SiteConfig {
-                filetype: "text".to_string(), // Plain text for emails
-                takeover: TakeoverMode::Empty, // Only if empty body?
-                cmdline: "firenvim".to_string(),
-            }));
+        if let Ok(re) = Regex::new(r"gmail\.com.*") {
+            rules.push((
+                re,
+                SiteConfig {
+                    filetype: "text".to_string(),  // Plain text for emails
+                    takeover: TakeoverMode::Empty, // Only if empty body?
+                    cmdline: "firenvim".to_string(),
+                },
+            ));
         }
 
         Self { rules }

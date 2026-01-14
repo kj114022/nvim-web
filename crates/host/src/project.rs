@@ -51,7 +51,7 @@ impl ProjectConfig {
         if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
                 Ok(content) => match toml::from_str(&content) {
-                Ok(config) => return config,
+                    Ok(config) => return config,
                     Err(e) => eprintln!("  [warn] Failed to parse .nvim-web/config.toml: {e}"),
                 },
                 Err(e) => eprintln!("  [warn] Failed to read .nvim-web/config.toml: {e}"),
@@ -73,10 +73,10 @@ impl ProjectConfig {
 
     /// Get the working directory (resolved to absolute path)
     pub fn resolved_cwd(&self, project_path: &Path) -> PathBuf {
-        self.editor.cwd.as_ref().map_or_else(
-            || project_path.to_path_buf(),
-            |cwd| project_path.join(cwd)
-        )
+        self.editor
+            .cwd
+            .as_ref()
+            .map_or_else(|| project_path.to_path_buf(), |cwd| project_path.join(cwd))
     }
 }
 
@@ -106,20 +106,15 @@ pub struct OpenToken {
 }
 
 /// Token mode determines how the token can be used
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenMode {
     /// Single-use token (current behavior)
+    #[default]
     SingleUse,
     /// Shareable token with optional time limit
     Share,
     /// Snapshot token (reproducible state)
     Snapshot,
-}
-
-impl Default for TokenMode {
-    fn default() -> Self {
-        Self::SingleUse
-    }
 }
 
 impl OpenToken {
@@ -144,7 +139,7 @@ impl OpenToken {
             TokenMode::SingleUse => !self.claimed,
             TokenMode::Share => {
                 // Check max claims if set
-                self.max_claims.map_or(true, |max| self.claim_count < max)
+                self.max_claims.is_none_or(|max| self.claim_count < max)
             }
             TokenMode::Snapshot => true, // Snapshots are always claimable
         }
@@ -189,7 +184,11 @@ pub fn store_token(path: PathBuf, config: ProjectConfig) -> String {
 }
 
 /// Store a new open token with options
-pub fn store_token_with_options(path: PathBuf, config: ProjectConfig, options: TokenOptions) -> String {
+pub fn store_token_with_options(
+    path: PathBuf,
+    config: ProjectConfig,
+    options: TokenOptions,
+) -> String {
     let token = generate_token();
     let open_token = OpenToken {
         path,
@@ -220,7 +219,9 @@ pub fn claim_token(token: &str) -> Option<(PathBuf, ProjectConfig)> {
 }
 
 /// Claim a token and return full info including deep link
-pub fn claim_token_full(token: &str) -> Option<(PathBuf, ProjectConfig, Option<String>, Option<u32>)> {
+pub fn claim_token_full(
+    token: &str,
+) -> Option<(PathBuf, ProjectConfig, Option<String>, Option<u32>)> {
     if let Ok(mut tokens) = OPEN_TOKENS.write() {
         if let Some(open_token) = tokens.get_mut(token) {
             if open_token.is_valid() {

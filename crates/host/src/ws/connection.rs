@@ -4,11 +4,12 @@
 //! session management, and bidirectional message bridging.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use rmpv::Value;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, RwLock};
 use tokio_tungstenite::tungstenite::{
     handshake::server::{Request, Response},
@@ -18,8 +19,10 @@ use tokio_tungstenite::tungstenite::{
 use crate::session::AsyncSessionManager;
 use crate::vfs::{FsRequestRegistry, VfsManager};
 
-use super::protocol::{parse_session_id_from_uri, parse_view_id_from_uri, parse_context_from_uri, validate_origin};
 use super::commands::handle_browser_message;
+use super::protocol::{
+    parse_context_from_uri, parse_session_id_from_uri, parse_view_id_from_uri, validate_origin,
+};
 use super::rate_limit::RateLimiter;
 
 /// Connection metadata extracted during WebSocket handshake
@@ -36,12 +39,16 @@ pub struct ConnectionInfo {
 /// Handle a single WebSocket connection
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::significant_drop_tightening)]
-pub async fn handle_connection(
-    stream: TcpStream,
+pub async fn handle_connection<S>(
+    stream: S,
     manager: Arc<RwLock<AsyncSessionManager>>,
     fs_registry: Option<Arc<FsRequestRegistry>>,
     vfs_manager: Option<Arc<RwLock<VfsManager>>>,
-) -> Result<()> {
+    fs_request_tx: Option<broadcast::Sender<Vec<u8>>>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     // Capture connection info during handshake
     let conn_info = Arc::new(std::sync::Mutex::new(ConnectionInfo::default()));
     let conn_info_clone = conn_info.clone();
@@ -54,7 +61,7 @@ pub async fn handle_connection(
 
         // Extract session ID or view ID from URI
         let uri = req.uri().to_string();
-        
+
         // Check for viewer mode first (?view=session_id)
         if let Some(view_id) = parse_view_id_from_uri(&uri) {
             info.view_session_id = Some(view_id);
@@ -62,7 +69,7 @@ pub async fn handle_connection(
         } else {
             info.session_id = parse_session_id_from_uri(&uri);
         }
-        
+
         // Extract context (URL)
         info.context = parse_context_from_uri(&uri);
 
@@ -121,6 +128,8 @@ pub async fn handle_connection(
                     if let Some(session) = mgr.get_session_mut(existing_id) {
                         session.connected = true;
                         session.touch();
+                        // Restore session state (cursor, buffers, undo)
+                        let _ = session.restore_session().await;
                         // Request redraw to sync UI state
                         let _ = session.request_redraw().await;
                     }
@@ -159,69 +168,144 @@ pub async fn handle_connection(
             .ok_or_else(|| anyhow::anyhow!("Session not found"))?
     };
 
-    // Bidirectional bridge
-    let session_id_clone = session_id.clone();
-    let manager_clone = manager.clone();
-    
-    // Rate limiter: 1000 burst, 100/sec sustained
-    let mut rate_limiter = RateLimiter::default_ws();
+    // VFS request receiver (for BrowserFS)
+    let fs_rx = fs_request_tx
+        .as_ref()
+        .map(tokio::sync::broadcast::Sender::subscribe);
 
-    // Track last lag recovery time for debouncing
-    let mut last_lag_recovery = std::time::Instant::now();
-    const LAG_RECOVERY_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
+    // ========================================
+    // SPLIT PATTERN: Dedicated sender task
+    // ========================================
+    // Wrap ws_tx in Arc<Mutex> for concurrent access from sender task
+    let ws_tx = Arc::new(tokio::sync::Mutex::new(ws_tx));
+    let ws_tx_sender = ws_tx.clone();
+    let ws_tx_fs = ws_tx.clone();
 
-    loop {
-        tokio::select! {
-            // Forward redraws to browser
-            result = redraw_rx.recv() => {
-                match result {
-                    Ok(bytes) => {
-                        if ws_tx.send(Message::Binary(bytes)).await.is_err() {
-                            tracing::warn!(session_id = %session_id_clone, "Send failed, disconnecting");
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        // Messages were dropped - UI is now out of sync
-                        tracing::warn!(
-                            session_id = %session_id_clone,
-                            dropped_messages = n,
-                            "Redraw messages lagged, requesting full resync"
-                        );
-                        
-                        // Debounce redraw requests to avoid flooding
-                        if last_lag_recovery.elapsed() >= LAG_RECOVERY_DEBOUNCE {
-                            last_lag_recovery = std::time::Instant::now();
-                            
-                            // Request full redraw to resync UI
-                            let mgr = manager_clone.read().await;
-                            if let Some(session) = mgr.get_session(&session_id_clone) {
-                                if let Err(e) = session.request_redraw().await {
-                                    tracing::error!(
-                                        session_id = %session_id_clone,
-                                        error = %e,
-                                        "Failed to request redraw after lag"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
+    let sender_session_id = session_id.clone();
+    let sender_manager = manager.clone();
+
+    // Spawn dedicated task for Neovim -> Browser messages (redraws)
+    let sender_handle = tokio::spawn(async move {
+        let mut last_lag_recovery = std::time::Instant::now();
+        const LAG_RECOVERY_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+        loop {
+            match redraw_rx.recv().await {
+                Ok(bytes) => {
+                    let mut tx = ws_tx_sender.lock().await;
+                    if tx.send(Message::Binary(bytes)).await.is_err() {
+                        tracing::warn!(session_id = %sender_session_id, "Send failed, stopping sender");
                         break;
                     }
                 }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        session_id = %sender_session_id,
+                        dropped_messages = n,
+                        "Redraw messages lagged, requesting full resync"
+                    );
+
+                    if last_lag_recovery.elapsed() >= LAG_RECOVERY_DEBOUNCE {
+                        last_lag_recovery = std::time::Instant::now();
+                        let mgr = sender_manager.read().await;
+                        if let Some(session) = mgr.get_session(&sender_session_id) {
+                            if let Err(e) = session.request_redraw().await {
+                                tracing::error!(
+                                    session_id = %sender_session_id,
+                                    error = %e,
+                                    "Failed to request redraw after lag"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Spawn dedicated task for VFS -> Browser messages (if BrowserFS enabled)
+    let fs_sender_handle = if let Some(mut fs_rx) = fs_rx {
+        let ws_tx_fs_clone = ws_tx_fs.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                match fs_rx.recv().await {
+                    Ok(bytes) => {
+                        let mut tx = ws_tx_fs_clone.lock().await;
+                        let _ = tx.send(Message::Binary(bytes)).await;
+                    }
+                    Err(_) => break,
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Rate limiter: 1000 burst, 100/sec sustained
+    let mut rate_limiter = RateLimiter::default_ws();
+
+    // Clones for main loop
+    let session_id_clone = session_id.clone();
+    let manager_clone = manager.clone();
+
+    // ========================================
+    // Main loop: Browser -> Neovim only
+    // With heartbeat to detect zombie sessions
+    // ========================================
+
+    // Heartbeat configuration
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+    const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+
+    let mut heartbeat_interval = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let mut last_activity = Instant::now();
+
+    loop {
+        tokio::select! {
+            // Heartbeat tick - send ping
+            _ = heartbeat_interval.tick() => {
+                // Check for zombie session (no activity in 5 minutes)
+                if last_activity.elapsed() > HEARTBEAT_TIMEOUT {
+                    tracing::warn!(
+                        session_id = %session_id_clone,
+                        elapsed_secs = last_activity.elapsed().as_secs(),
+                        "Session heartbeat timeout, triggering auto-save"
+                    );
+
+                    // Auto-save before disconnect
+                    {
+                        let mgr = manager_clone.read().await;
+                        if let Some(session) = mgr.get_session(&session_id_clone) {
+                            let _ = session.rpc_call("nvim_command", vec![Value::String("silent! w".into())]).await;
+                            let _ = session.rpc_call("nvim_command", vec![Value::String("silent! mksession! ~/.local/state/nvim/sessions/auto.vim".into())]).await;
+                        }
+                    }
+                    break;
+                }
+
+                // Send ping to keep connection alive
+                let mut tx = ws_tx.lock().await;
+                if tx.send(Message::Ping(vec![])).await.is_err() {
+                    tracing::debug!(session_id = %session_id_clone, "Ping send failed");
+                    break;
+                }
             }
 
-            // Forward browser input to neovim (blocked for viewers)
+            // WebSocket message
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
+                        // Update activity timestamp
+                        last_activity = Instant::now();
+
                         // Viewers can only receive, not send input
                         if is_viewer {
-                            // Ignore input from viewers, just keep connection alive
                             continue;
                         }
-                        
+
                         // Rate limit check
                         if !rate_limiter.try_consume() {
                             tracing::warn!(
@@ -230,7 +314,7 @@ pub async fn handle_connection(
                             );
                             continue;
                         }
-                        
+
                         match handle_browser_message(
                             &session_id_clone,
                             &manager_clone,
@@ -240,7 +324,8 @@ pub async fn handle_connection(
                         ).await {
                             Ok(Some(response_bytes)) => {
                                 // Send RPC response back to browser
-                                if ws_tx.send(Message::Binary(response_bytes)).await.is_err() {
+                                let mut tx = ws_tx.lock().await;
+                                if tx.send(Message::Binary(response_bytes)).await.is_err() {
                                     tracing::warn!(session_id = %session_id_clone, "Failed to send RPC response");
                                     break;
                                 }
@@ -259,6 +344,10 @@ pub async fn handle_connection(
                             session.touch();
                         }
                     }
+                    Some(Ok(Message::Pong(_))) => {
+                        // Pong received - connection is alive
+                        last_activity = Instant::now();
+                    }
                     Some(Ok(Message::Close(_))) => {
                         break;
                     }
@@ -272,6 +361,12 @@ pub async fn handle_connection(
                 }
             }
         }
+    }
+
+    // Clean up sender tasks
+    sender_handle.abort();
+    if let Some(handle) = fs_sender_handle {
+        handle.abort();
     }
 
     // Mark session as disconnected
@@ -288,7 +383,10 @@ pub async fn handle_connection(
 }
 
 /// Helper to create a new session
-pub async fn create_new_session(mgr: &mut AsyncSessionManager, context: Option<String>) -> Result<String> {
+pub async fn create_new_session(
+    mgr: &mut AsyncSessionManager,
+    context: Option<String>,
+) -> Result<String> {
     match mgr.create_session(context).await {
         Ok(id) => {
             if let Some(session) = mgr.get_session_mut(&id) {

@@ -19,20 +19,20 @@ pub fn run(shutdown_tx: oneshot::Sender<()>) -> anyhow::Result<()> {
                 eprintln!("[native] Stdin closed, shutting down...");
                 break;
             }
-            
+
             let len = u32::from_ne_bytes(len_bytes) as usize;
-            
+
             // 2. Read message body
             let mut msg_bytes = vec![0u8; len];
             if std::io::stdin().read_exact(&mut msg_bytes).is_err() {
                 eprintln!("[native] Failed to read message body");
                 break;
             }
-            
+
             // 3. Parse JSON (optional, but good for validation)
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&msg_bytes) {
                 eprintln!("[native] Received: {json:?}");
-                
+
                 // If we receive a "ping" or specific command, we can respond
                 // For now, we just echo or acknowledge
             }
@@ -53,11 +53,11 @@ pub fn run(shutdown_tx: oneshot::Sender<()>) -> anyhow::Result<()> {
 pub fn send_message(msg: &serde_json::Value) -> anyhow::Result<()> {
     let json = serde_json::to_vec(msg)?;
     let len = u32::try_from(json.len())?;
-    
+
     let mut stdout = std::io::stdout();
     stdout.write_all(&len.to_ne_bytes())?;
     stdout.write_all(&json)?;
     stdout.flush()?;
-    
+
     Ok(())
 }

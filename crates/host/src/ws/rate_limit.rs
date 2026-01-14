@@ -84,12 +84,12 @@ mod tests {
     #[test]
     fn test_refill() {
         let mut limiter = RateLimiter::new(10.0, 10.0); // 10/sec refill
-        // Consume all
+                                                        // Consume all
         for _ in 0..10 {
             limiter.try_consume();
         }
         assert!(!limiter.try_consume());
-        
+
         // Wait 200ms = 2 tokens refilled
         sleep(Duration::from_millis(200));
         assert!(limiter.try_consume());

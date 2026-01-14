@@ -2,6 +2,7 @@
 //!
 //! Reads config from ~/.config/nvim-web/config.toml
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Server configuration
@@ -9,7 +10,11 @@ use std::path::PathBuf;
 pub struct ServerConfig {
     pub ws_port: u16,
     pub http_port: u16,
+    /// WebTransport/QUIC port (requires TLS)
+    pub webtransport_port: Option<u16>,
     pub bind: String,
+    pub ssl_cert: Option<String>,
+    pub ssl_key: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -17,7 +22,10 @@ impl Default for ServerConfig {
         Self {
             ws_port: 9001,
             http_port: 8080,
+            webtransport_port: None, // Enabled when TLS configured
             bind: "127.0.0.1".to_string(),
+            ssl_cert: None,
+            ssl_key: None,
         }
     }
 }
@@ -80,7 +88,24 @@ pub struct Config {
     pub server: ServerConfig,
     pub session: SessionConfig,
     pub rate_limit: RateLimitConfig,
+    pub remote: RemoteConfig,
     pub connections: Vec<Connection>,
+}
+
+/// Remote connection configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RemoteConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Connection URI: tcp://127.0.0.1:6666 or unix:///tmp/nvim.sock
+    #[serde(default)]
+    pub address: String,
+    /// Authentication token for secure TCP connections (per Neovim issue #4443)
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    /// Path to file containing auth token (alternative to inline token)
+    #[serde(default)]
+    pub auth_token_file: Option<String>,
 }
 
 impl Config {
@@ -105,6 +130,7 @@ impl Config {
         let mut config = Self::default();
         let mut current_connection: Option<Connection> = None;
         let mut in_connections = false;
+        let mut in_remote = false;
 
         for line in content.lines() {
             let line = line.trim();
@@ -124,6 +150,7 @@ impl Config {
                     ssh_tunnel: None,
                 });
                 in_connections = true;
+                in_remote = false;
                 continue;
             }
 
@@ -135,6 +162,8 @@ impl Config {
                     }
                 }
                 in_connections = false;
+
+                in_remote = line == "[remote]";
                 continue;
             }
 
@@ -153,6 +182,18 @@ impl Config {
                             _ => {}
                         }
                     }
+                } else if in_remote {
+                    match key {
+                        "enabled" => {
+                            if value == "true" {
+                                config.remote.enabled = true;
+                            } else if value == "false" {
+                                config.remote.enabled = false;
+                            }
+                        }
+                        "address" => config.remote.address = value.to_string(),
+                        _ => {}
+                    }
                 } else {
                     match key {
                         "ws_port" => {
@@ -167,6 +208,17 @@ impl Config {
                         }
                         "bind" => {
                             config.server.bind = value.to_string();
+                        }
+                        "ssl_cert" => {
+                            config.server.ssl_cert = Some(value.to_string());
+                        }
+                        "ssl_key" => {
+                            config.server.ssl_key = Some(value.to_string());
+                        }
+                        "webtransport_port" => {
+                            if let Ok(port) = value.parse() {
+                                config.server.webtransport_port = Some(port);
+                            }
                         }
                         "timeout" => {
                             if let Ok(secs) = value.parse() {
@@ -295,7 +347,8 @@ mod tests {
 
     #[test]
     fn test_parse_ssh_tunnel() {
-        let tunnel_str = r#"{ host = "example.com", port = 22, local_port = 9002, remote_port = 9001 }"#;
+        let tunnel_str =
+            r#"{ host = "example.com", port = 22, local_port = 9002, remote_port = 9001 }"#;
         let tunnel = Config::parse_ssh_tunnel(tunnel_str).unwrap();
         assert_eq!(tunnel.host, "example.com");
         assert_eq!(tunnel.port, 22);

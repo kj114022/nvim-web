@@ -65,12 +65,12 @@ pub fn parse_context_from_uri(uri: &str) -> Option<String> {
                     // Percent decode the value
                     if let Some(_decoded) = url::form_urlencoded::parse(value.as_bytes())
                         .map(|(k, _)| k.to_string())
-                        .next() 
+                        .next()
                     {
                         // Note: form_urlencoded::parse returns key-value pairs
                         // If we just have a value, we need to treat it carefully.
                         // Actually, percent_encoding crate is better but url::form_urlencoded handles + vs %20 correctly.
-                        // Let's use percent_encoding directly if we want raw decoding, 
+                        // Let's use percent_encoding directly if we want raw decoding,
                         // but since query params are form-urlencoded, let's use that.
                         // Wait, url::form_urlencoded::parse is for key=value pairs.
                         // We just want to decode a single string.
@@ -119,10 +119,16 @@ mod tests {
 
     #[test]
     fn test_parse_session_id() {
-        assert_eq!(parse_session_id_from_uri("/?session=abc123"), Some("abc123".to_string()));
+        assert_eq!(
+            parse_session_id_from_uri("/?session=abc123"),
+            Some("abc123".to_string())
+        );
         assert_eq!(parse_session_id_from_uri("/?session=new"), None);
         assert_eq!(parse_session_id_from_uri("/"), None);
-        assert_eq!(parse_session_id_from_uri("/?foo=bar&session=xyz"), Some("xyz".to_string()));
+        assert_eq!(
+            parse_session_id_from_uri("/?foo=bar&session=xyz"),
+            Some("xyz".to_string())
+        );
     }
 
     #[test]
@@ -159,10 +165,51 @@ mod tests {
     #[test]
     fn test_parse_context() {
         assert_eq!(
-            parse_context_from_uri("/?context=https%3A%2F%2Fgithub.com"), 
+            parse_context_from_uri("/?context=https%3A%2F%2Fgithub.com"),
             Some("https://github.com".to_string())
         );
         assert_eq!(parse_context_from_uri("/?foo=bar"), None);
     }
-}
+    #[cfg(test)]
+    mod fuzz_tests {
+        use super::*;
+        use proptest::prelude::*;
 
+        proptest! {
+            #[test]
+            fn fuzz_parse_session_id(s in "\\PC*") {
+                // Must not panic
+                let _ = parse_session_id_from_uri(&s);
+            }
+
+            #[test]
+            fn fuzz_parse_context(s in "\\PC*") {
+                // Must not panic
+                let _ = parse_context_from_uri(&s);
+            }
+
+            #[test]
+            fn fuzz_validate_origin(s in "\\PC*") {
+                // Must not panic
+                let allowed = validate_origin(&s);
+
+                // Property: If origin is valid, it MUST be parseable as URL
+                if allowed {
+                    let url = Url::parse(&s);
+                    prop_assert!(url.is_ok());
+                    let url = url.unwrap();
+                    let host = url.host_str().unwrap_or("");
+                    // Must be one of our allowed hosts
+                    prop_assert!(host == "localhost" || host == "127.0.0.1");
+                }
+            }
+
+            #[test]
+            fn fuzz_origin_bypass_check(host in "[a-z0-9-]+\\.localhost") {
+                // Subdomains of localhost should NOT be allowed (unless added to whitelist)
+                let url = format!("http://{}", host);
+                prop_assert!(!validate_origin(&url));
+            }
+        }
+    }
+}

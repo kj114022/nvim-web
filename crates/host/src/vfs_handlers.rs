@@ -54,6 +54,7 @@ impl TreeEntry {
 /// Handle open VFS file request
 ///
 /// Reads file content from VFS backend and loads it into a new Neovim buffer.
+/// For large files (> 1MB), only loads the first 100KB and shows a truncation indicator.
 ///
 /// # Arguments
 /// * `vfs_path` - VFS path (e.g., `<vfs://local/path/to/file.txt>`)
@@ -63,9 +64,16 @@ impl TreeEntry {
 /// # Protocol
 /// When the browser requests to open a VFS file, this handler:
 /// 1. Reads the file content via `VfsManager`
-/// 2. Creates a new buffer in Neovim
-/// 3. Sets the buffer content
-/// 4. Returns the buffer number
+/// 2. If file > 1MB, truncate to first 100KB with indicator
+/// 3. Creates a new buffer in Neovim
+/// 4. Sets the buffer content
+/// 5. Returns the buffer number
+
+/// Large file threshold: 1MB
+const LARGE_FILE_THRESHOLD: usize = 1024 * 1024;
+/// Chunk size for large files: 100KB
+const LARGE_FILE_CHUNK_SIZE: usize = 100 * 1024;
+
 pub async fn handle_open_vfs(
     vfs_path: &str,
     session: &AsyncSession,
@@ -74,9 +82,34 @@ pub async fn handle_open_vfs(
     // Read file content via VFS
     let content = vfs_manager.read_file(vfs_path).await?;
 
+    // Handle large files with truncation
+    let (display_content, truncated) = if content.len() > LARGE_FILE_THRESHOLD {
+        let chunk = &content[..LARGE_FILE_CHUNK_SIZE.min(content.len())];
+        (chunk.to_vec(), Some(content.len()))
+    } else {
+        (content, None)
+    };
+
     // Convert to string (assuming UTF-8 text)
-    let text = String::from_utf8_lossy(&content);
-    let lines: Vec<Value> = text.lines().map(|l| Value::String(l.into())).collect();
+    let text = String::from_utf8_lossy(&display_content);
+    let mut lines: Vec<Value> = text.lines().map(|l| Value::String(l.into())).collect();
+
+    // Add truncation indicator if needed
+    if let Some(total_size) = truncated {
+        let size_mb = total_size as f64 / (1024.0 * 1024.0);
+        let shown_kb = LARGE_FILE_CHUNK_SIZE as f64 / 1024.0;
+        lines.push(Value::String("".into()));
+        lines.push(Value::String(
+            format!(
+                "--- File truncated ({:.1}MB total, showing first {:.0}KB) ---",
+                size_mb, shown_kb
+            )
+            .into(),
+        ));
+        lines.push(Value::String(
+            "--- Use :e! or external tool for full file ---".into(),
+        ));
+    }
 
     // Create new buffer
     let bufnr_result = session
@@ -205,6 +238,46 @@ pub async fn handle_write_vfs(
     Ok(())
 }
 
+/// Handle chunked file read for large file virtual scrolling
+///
+/// Returns lines from start_line to end_line (0-indexed, inclusive).
+/// This enables virtual scrolling where only visible lines are loaded.
+pub async fn handle_read_chunk(
+    vfs_path: &str,
+    start_line: usize,
+    end_line: usize,
+    vfs_manager: &VfsManager,
+) -> Result<Vec<String>> {
+    // Read full file (could optimize with seek for truly huge files)
+    let content = vfs_manager.read_file(vfs_path).await?;
+    let text = String::from_utf8_lossy(&content);
+
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    // Clamp range
+    let start = start_line.min(total_lines);
+    let end = (end_line + 1).min(total_lines);
+
+    let chunk: Vec<String> = lines[start..end].iter().map(|s| (*s).to_string()).collect();
+
+    eprintln!(
+        "VFS: Read chunk {} lines {}-{} (total {})",
+        vfs_path, start_line, end_line, total_lines
+    );
+
+    Ok(chunk)
+}
+
+/// Get file metadata for virtual buffer setup
+pub async fn handle_file_info(vfs_path: &str, vfs_manager: &VfsManager) -> Result<(usize, usize)> {
+    let content = vfs_manager.read_file(vfs_path).await?;
+    let size = content.len();
+    let line_count = content.iter().filter(|&&b| b == b'\n').count() + 1;
+
+    Ok((size, line_count))
+}
+
 /// Handle delete VFS file/directory request
 ///
 /// Recursively deletes the path in the VFS backend.
@@ -217,38 +290,36 @@ pub async fn handle_delete_vfs(
     // For now we use the async_ops logic directly or exposed via manager
     // Since VfsManager doesn't expose remove_dir_all directly yet (it maps to backend),
     // we need to resolve backend and call async_ops.
-    
+
     // Parse URI to get backend
     let uri = url::Url::parse(vfs_path).map_err(|e| anyhow::anyhow!("Invalid URI: {e}"))?;
     let scheme = uri.scheme();
-    
+
     let vfs = vfs_manager; // We have &VfsManager
-    // We need to access the inner backend. VfsManager.get_backend(scheme) -> Result<Arc<dyn VfsBackend>>
-    
+                           // We need to access the inner backend. VfsManager.get_backend(scheme) -> Result<Arc<dyn VfsBackend>>
+
     if let Ok(backend) = vfs.get_backend(scheme).await {
         // Path logic depends on backend (e.g. ssh has /path, local has path)
         // VfsManager::resolve_path handles this, but here we need backend access.
         // Let's assume VfsManager exposes a way or we manually resolve.
-        
-        let path = if scheme == "file" || scheme == "local" {
-            uri.path().to_string()
-        } else if scheme == "ssh" {
-            uri.path().to_string()
-        } else if scheme == "browser" {
-            uri.path().to_string()
-        } else {
-             uri.path().to_string()
-        };
-        
+
+        let path = uri.path().to_string();
+
         crate::vfs::async_ops::remove_dir_all(backend.as_ref(), &path).await?;
-        
+
         // Notify user via echomsg
         let msg = format!("Deleted {vfs_path}");
-        session.rpc_call("nvim_call_function", vec![
-             Value::String("NvimWeb_EchoMsg".into()), 
-             Value::Array(vec![Value::String(msg.into())])
-        ]).await.ok(); // Ignore error if function doesn't exist
-        
+        session
+            .rpc_call(
+                "nvim_call_function",
+                vec![
+                    Value::String("NvimWeb_EchoMsg".into()),
+                    Value::Array(vec![Value::String(msg.into())]),
+                ],
+            )
+            .await
+            .ok(); // Ignore error if function doesn't exist
+
         eprintln!("VFS: Deleted {vfs_path}");
         Ok(())
     } else {

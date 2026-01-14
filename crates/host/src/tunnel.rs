@@ -57,7 +57,7 @@ impl ActiveTunnel {
     /// Check if tunnel is still running
     pub fn is_alive(&mut self) -> bool {
         match self.process.try_wait() {
-            Ok(None) => true,  // Still running
+            Ok(None) => true,     // Still running
             Ok(Some(_)) => false, // Exited
             Err(_) => false,
         }
@@ -89,15 +89,16 @@ pub struct TunnelManager {
 
 impl TunnelManager {
     pub fn new() -> Self {
-        Self { tunnels: Vec::new() }
+        Self {
+            tunnels: Vec::new(),
+        }
     }
 
     /// Establish a tunnel and return the local port
     pub fn connect(&mut self, config: &SshTunnel) -> Result<u16, String> {
         // Check if tunnel already exists
         for tunnel in &self.tunnels {
-            if tunnel.config.host == config.host
-                && tunnel.config.remote_port == config.remote_port
+            if tunnel.config.host == config.host && tunnel.config.remote_port == config.remote_port
             {
                 return Ok(tunnel.config.local_port);
             }
