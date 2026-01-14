@@ -1,0 +1,28 @@
+{
+  "name": "nvim-web",
+  "version": "1.0.0",
+  "description": "**Neovim in the browser.** No emulation, no compromises. Run your native Neovim binary on a secure host and render pixel-perfectly via WebAssembly.",
+  "main": "config.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kj114022/nvim-web.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kj114022/nvim-web/issues"
+  },
+  "homepage": "https://github.com/kj114022/nvim-web#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "typescript": "^5.9.3"
+  }
+}

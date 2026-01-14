@@ -8,7 +8,7 @@ test.describe('nvim-web E2E Tests', () => {
     await page.waitForLoadState('networkidle');
     
     // Check for essential elements
-    await expect(page.locator('canvas, #start-screen')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('canvas, #start-screen').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('shows Neovim after start screen', async ({ page }) => {

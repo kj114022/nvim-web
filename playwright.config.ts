@@ -29,7 +29,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'cargo run --release -p nvim-web-host',
+    command: 'cargo run --release -p nvim-web-host --bin nvim-web-host',
     url: 'http://127.0.0.1:8080',
     reuseExistingServer: !process.env.CI,
     timeout: 180 * 1000,
