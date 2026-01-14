@@ -13,7 +13,7 @@ use rust_embed::RustEmbed;
 #[include = "styles.css"]
 #[include = "worker.js"]
 #[include = "pkg/*"]
-#[include = "icons/*"]
+#[include = "public/icons/*"]
 pub struct UiAssets;
 
 /// Get a file from embedded assets with proper MIME type
@@ -25,7 +25,10 @@ pub fn get_asset(path: &str) -> Option<(Vec<u8>, &'static str)> {
         path.trim_start_matches('/')
     };
 
-    UiAssets::get(path).map(|f| {
+    // Try finding the file directly or in public/ directory
+    let asset = UiAssets::get(path).or_else(|| UiAssets::get(&format!("public/{}", path)));
+
+    asset.map(|f| {
         let mime = mime_guess::from_path(path)
             .first_raw()
             .unwrap_or("application/octet-stream");
