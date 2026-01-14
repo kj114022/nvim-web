@@ -17,10 +17,22 @@ We follow a production-grade engineering ruleset. Please review the following co
 
 | Crate | Path | Description |
 |-------|------|-------------|
-| **nvim-web-host** | `crates/host` | Rust backend (Axum/Tokio). Handles WebSocket, Neovim process management, and VFS ops. |
+| **nvim-web-host** | `crates/host` | Rust backend (Axum/Tokio). WebSocket, WebTransport, Neovim process, VFS, auth, K8s. |
 | **nvim-web-ui** | `crates/ui` | Frontend (Rust/WASM). Renders Neovim grid to HTML5 Canvas. |
+| **nvim-web-ui-window** | `crates/ui-window` | Main thread WASM module. |
+| **nvim-web-ui-worker** | `crates/ui-worker` | Web Worker WASM module. |
 | **nvim-web-vfs** | `crates/vfs` | Virtual Filesystem abstraction (Local, Browser/OPFS, SSH, Git). |
 | **nvim-web-protocol** | `crates/protocol` | Shared MessagePack types and constants. |
+
+### Host Modules
+
+| Module | Description |
+|--------|-------------|
+| `transport/` | WebSocket and WebTransport abstraction |
+| `crdt/` | y-crdt based collaborative editing |
+| `oidc/` | OpenID Connect authentication with BeyondCorp policies |
+| `k8s/` | Kubernetes pod-per-session management |
+| `collaboration/` | Multi-user session support with CRDTs |
 
 ## 3. Development Setup
 
@@ -38,8 +50,7 @@ We follow a production-grade engineering ruleset. Please review the following co
    cd nvim-web
    ```
 
-2. **Build the Wasm UI**:
-   The UI must be compiled to WASM before the host can embed it.
+2. **Build the WASM UI**:
    ```bash
    cd crates/ui
    wasm-pack build --target web --release
@@ -53,7 +64,6 @@ We follow a production-grade engineering ruleset. Please review the following co
 
 4. **Run Locally**:
    ```bash
-   # Runs the host, which serves the compiled WASM UI
    cargo run -p nvim-web-host
    ```
    Open `http://127.0.0.1:8080`.
@@ -72,6 +82,11 @@ Requires Docker to spin up a test SSH server.
 ```bash
 docker-compose up -d ssh-test
 cargo test --test ssh_integration
+```
+
+### Browser Tests (Playwright)
+```bash
+npx playwright test
 ```
 
 ## 5. Coding Standards
@@ -100,6 +115,24 @@ cargo test --test ssh_integration
 6. **Commit** using conventional messages.
 7. **Push** and create a **Pull Request**.
 
-## 7. Protocol Documentation
+## 7. Documentation
 
-If you modify the communication protocol (RPC messages, notification types), you **MUST** update `docs/protocol.md` in the same PR. The documentation is the source of truth for the wire format.
+When modifying features, update the corresponding documentation:
+
+| Feature | Documentation |
+|---------|---------------|
+| Protocol | `docs/protocol.md` |
+| WebTransport | `docs/webtransport.md` |
+| Collaboration | `docs/collaboration.md` |
+| Authentication | `docs/authentication.md` |
+| Kubernetes | `docs/kubernetes.md` |
+
+## 8. Code Review
+
+All PRs require at least one approval. Reviewers check for:
+
+- Correctness and test coverage
+- Consistent coding style
+- Documentation updates
+- Performance implications
+- Security considerations

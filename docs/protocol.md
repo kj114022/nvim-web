@@ -38,38 +38,38 @@ it transports them faithfully.
 
 ## Message Envelope
  
- Protocol messages are MessagePack-encoded arrays. The first element determines the message category:
+Protocol messages are MessagePack-encoded arrays. The first element determines the message category:
  
- ### Standard Envelope
- ```
- [type_id, ...payload]
- ```
+### Standard Envelope
+```
+[type_id, ...payload]
+```
  
- - `type_id` (integer):
-   - `0`: RPC request
-   - `1`: RPC response
-   - `2`: Notification (if 2nd element is string) OR FS Request (if 2nd element is integer)
-   - `3`: FS response
+- `type_id` (integer):
+  - `0`: RPC request
+  - `1`: RPC response
+  - `2`: Notification (if 2nd element is string) OR FS Request (if 2nd element is integer)
+  - `3`: FS response
  
- ### Input Envelope (Legacy/Short-circuit)
- ```
- [method_name, ...args]
- ```
+### Input Envelope (Legacy/Short-circuit)
+```
+[method_name, ...args]
+```
  
- - `method_name` (string):
-   - `"input"`: Keyboard input
-   - `"resize"`: Grid resize
-   - `"input_mouse"`: Mouse events
+- `method_name` (string):
+  - `"input"`: Keyboard input
+  - `"resize"`: Grid resize
+  - `"input_mouse"`: Mouse events
  
- The presence of a message `id` in requests indicates a request/response pair. Messages without `id` are fire-and-forget.
+The presence of a message `id` in requests indicates a request/response pair. Messages without `id` are fire-and-forget.
  
- ## Message Categories
+## Message Categories
  
- ### Redraw (Notification)
+### Redraw (Notification)
  
- Direction: Host → UI
- Type: 2 (Notification)
- Source: Neovim `redraw` notifications
+Direction: Host → UI
+Type: 2 (Notification)
+Source: Neovim `redraw` notifications
 
 Payload:
 - Raw redraw event arrays as produced by Neovim
@@ -82,26 +82,26 @@ Format:
 
 ### Input
  
- Direction: UI → Host
+Direction: UI → Host
  
- Format:
- ```
- [method_name, ...args]
- ```
+Format:
+```
+[method_name, ...args]
+```
  
- Examples:
- - `["input", "<C-s>"]`
- - `["resize", 80, 24]`
- - `["input_mouse", "left", "press", "", 0, 10, 5]`
+Examples:
+- `["input", "<C-s>"]`
+- `["resize", 80, 24]`
+- `["input_mouse", "left", "press", "", 0, 10, 5]`
  
- ### RPC Responses
+### RPC Responses
  
- Direction: Bidirectional
- Request/response: Yes (`id` required)
+Direction: Bidirectional
+Request/response: Yes (`id` required)
  
- Used for:
- - Synchronous Neovim RPC calls
- - Blocking host-side operations
+Used for:
+- Synchronous Neovim RPC calls
+- Blocking host-side operations
 
 Semantics:
 - Exactly one response per request
