@@ -7,6 +7,10 @@ crates/*/Cargo.lock
 
 # WASM build output
 crates/ui/pkg/
+crates/ui-window/pkg/
+crates/ui-worker/pkg/
+pkg-window/
+pkg-worker/
 
 # macOS
 .DS_Store
@@ -39,15 +43,38 @@ lcov.info
 *.bak
 *.orig
 
-# Node modules (if any tooling uses npm)
-node_modules/
-
 # OS-specific
 Thumbs.db
 Desktop.ini
 
-# Gemini/AI artifacts (local development only)
-.gemini/
-
 # vendor
 vendor/
+
+# Node dependencies
+node_modules/
+crates/ui/dist/
+
+# TLS certificates (dev)
+*.pem
+*.key
+*.crt
+!k8s/*.yaml
+
+# Kubernetes secrets
+k8s/*.secret.yaml
+k8s/*.local.yaml
+kubeconfig
+.kube/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Database
+*.db
+*.sqlite
+
+# Scratchpad
+kt.md
+next.md
+server.log
