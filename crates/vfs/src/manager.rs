@@ -100,7 +100,10 @@ impl VfsManager {
     pub async fn add_alias(&self, alias: impl Into<String>, target: impl Into<String>) {
         let alias = alias.into();
         let target = target.into();
-        self.aliases.write().await.insert(alias.clone(), target.clone());
+        self.aliases
+            .write()
+            .await
+            .insert(alias.clone(), target.clone());
         let _ = self.event_tx.send(VfsEvent::AliasChanged { alias, target });
     }
 
@@ -113,7 +116,7 @@ impl VfsManager {
     /// "@work/src/main.rs" -> "vfs://ssh/workserver:22/home/me/src/main.rs"
     pub async fn resolve_aliases(&self, path: &str) -> String {
         let aliases = self.aliases.read().await;
-        
+
         for (alias, target) in aliases.iter() {
             if path.starts_with(alias) {
                 let suffix = &path[alias.len()..];
@@ -121,13 +124,16 @@ impl VfsManager {
                 return format!("{target}{suffix}");
             }
         }
-        
+
         path.to_string()
     }
 
     /// List all aliases
     pub async fn list_aliases(&self) -> Vec<(String, String)> {
-        self.aliases.read().await.iter()
+        self.aliases
+            .read()
+            .await
+            .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
@@ -139,7 +145,10 @@ impl VfsManager {
     /// Register a VFS backend (immediately available)
     pub async fn register_backend(&self, name: impl Into<String>, backend: Box<dyn VfsBackend>) {
         let name = name.into();
-        self.backends.write().await.insert(name.clone(), Arc::from(backend));
+        self.backends
+            .write()
+            .await
+            .insert(name.clone(), Arc::from(backend));
         let _ = self.event_tx.send(VfsEvent::BackendAdded { name });
     }
 
@@ -152,16 +161,19 @@ impl VfsManager {
     /// Hot-swap a backend (replaces existing without restart)
     pub async fn swap_backend(&self, name: impl Into<String>, backend: Box<dyn VfsBackend>) {
         let name = name.into();
-        
+
         // Remove from factories if it was lazy
         self.factories.write().await.remove(&name);
-        
+
         // Replace or insert the backend
-        self.backends.write().await.insert(name.clone(), Arc::from(backend));
-        
+        self.backends
+            .write()
+            .await
+            .insert(name.clone(), Arc::from(backend));
+
         // Invalidate cache entries for this backend
         self.invalidate_backend_cache(&name).await;
-        
+
         let _ = self.event_tx.send(VfsEvent::BackendAdded { name });
     }
 
@@ -170,7 +182,9 @@ impl VfsManager {
         self.backends.write().await.remove(name);
         self.factories.write().await.remove(name);
         self.invalidate_backend_cache(name).await;
-        let _ = self.event_tx.send(VfsEvent::BackendRemoved { name: name.to_string() });
+        let _ = self.event_tx.send(VfsEvent::BackendRemoved {
+            name: name.to_string(),
+        });
     }
 
     /// Get or initialize a backend
@@ -185,7 +199,10 @@ impl VfsManager {
         if let Some(factory) = factory {
             let backend = factory()?;
             let arc_backend: Arc<dyn VfsBackend> = Arc::from(backend);
-            self.backends.write().await.insert(name.to_string(), arc_backend.clone());
+            self.backends
+                .write()
+                .await
+                .insert(name.to_string(), arc_backend.clone());
             return Ok(arc_backend);
         }
 
@@ -235,10 +252,13 @@ impl VfsManager {
         }
 
         // Insert new entry
-        cache.insert(key.clone(), CacheEntry {
-            data,
-            inserted_at: std::time::Instant::now(),
-        });
+        cache.insert(
+            key.clone(),
+            CacheEntry {
+                data,
+                inserted_at: std::time::Instant::now(),
+            },
+        );
         order.push(key);
     }
 
@@ -256,12 +276,13 @@ impl VfsManager {
         let prefix = format!("vfs://{backend}/");
         let mut cache = self.cache.write().await;
         let mut order = self.cache_order.write().await;
-        
-        let keys_to_remove: Vec<String> = cache.keys()
+
+        let keys_to_remove: Vec<String> = cache
+            .keys()
             .filter(|k| k.starts_with(&prefix))
             .cloned()
             .collect();
-        
+
         for key in keys_to_remove {
             cache.remove(&key);
             if let Some(pos) = order.iter().position(|k| k == &key) {
@@ -279,7 +300,8 @@ impl VfsManager {
     /// Get cache stats
     pub async fn cache_stats(&self) -> (usize, usize) {
         let cache = self.cache.read().await;
-        let valid = cache.values()
+        let valid = cache
+            .values()
             .filter(|e| e.inserted_at.elapsed().as_secs() < CACHE_TTL_SECS)
             .count();
         (cache.len(), valid)
@@ -302,7 +324,7 @@ impl VfsManager {
     pub async fn parse_vfs_path(&self, vfs_path: &str) -> Result<(String, String)> {
         // Resolve aliases first
         let resolved = self.resolve_aliases(vfs_path).await;
-        
+
         if !resolved.starts_with("vfs://") {
             anyhow::bail!("Invalid VFS path: must start with vfs:// (got: {vfs_path})");
         }
@@ -320,7 +342,7 @@ impl VfsManager {
     /// Read file with caching
     pub async fn read_file(&self, vfs_path: &str) -> Result<Vec<u8>> {
         let resolved = self.resolve_aliases(vfs_path).await;
-        
+
         // Check cache first
         if let Some(data) = self.cache_get(&resolved).await {
             return Ok(data);
@@ -342,7 +364,7 @@ impl VfsManager {
 
         // Cache the result
         self.cache_put(resolved.clone(), data.clone()).await;
-        
+
         // Emit event
         let _ = self.event_tx.send(VfsEvent::Read { path: resolved });
 
@@ -406,7 +428,12 @@ impl VfsManager {
 
     /// List all managed buffers
     pub async fn list_managed_buffers(&self) -> Vec<ManagedBuffer> {
-        self.managed_buffers.read().await.values().cloned().collect()
+        self.managed_buffers
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 }
 
@@ -417,8 +444,9 @@ mod tests {
     #[tokio::test]
     async fn test_alias_resolution() {
         let mgr = VfsManager::new();
-        mgr.add_alias("@work", "vfs://ssh/workserver:22/home/me").await;
-        
+        mgr.add_alias("@work", "vfs://ssh/workserver:22/home/me")
+            .await;
+
         let resolved = mgr.resolve_aliases("@work/src/main.rs").await;
         assert_eq!(resolved, "vfs://ssh/workserver:22/home/me/src/main.rs");
     }
@@ -428,7 +456,7 @@ mod tests {
         let mgr = VfsManager::new();
         mgr.add_alias("@a", "vfs://local/a").await;
         mgr.add_alias("@b", "vfs://local/b").await;
-        
+
         let aliases = mgr.list_aliases().await;
         assert_eq!(aliases.len(), 2);
     }
@@ -436,12 +464,11 @@ mod tests {
     #[tokio::test]
     async fn test_backend_list() {
         let mgr = VfsManager::new();
-        
+
         // Register lazy factory
-        mgr.register_lazy_backend("test", Box::new(|| {
-            anyhow::bail!("Not implemented")
-        })).await;
-        
+        mgr.register_lazy_backend("test", Box::new(|| anyhow::bail!("Not implemented")))
+            .await;
+
         let backends = mgr.list_backends().await;
         assert!(backends.contains(&"test".to_string()));
     }

@@ -88,7 +88,7 @@ impl LocalFs {
     /// Resolve path without creating parent directories (for read/stat operations)
     fn resolve_existing(&self, path: &str) -> Result<PathBuf> {
         Self::validate_path(path)?;
-        
+
         let target = self.root.join(path.trim_start_matches('/'));
         let resolved = target.canonicalize()?;
 
@@ -116,21 +116,21 @@ impl LocalFs {
             // We compare absolute paths. both should be canonicalized (root is canonicalized in new)
             let resolved_str = resolved.to_string_lossy().to_lowercase();
             let root_str = self.root.to_string_lossy().to_lowercase();
-            
+
             // Note: to_string_lossy might not be perfect but for security check it's safer to fail closed
             if !resolved_str.starts_with(&root_str) {
-                 bail!(
+                bail!(
                     "Path traversal blocked (Windows): {} escapes sandbox {}",
                     original_path,
                     self.root.display()
                 );
             }
         }
-        
+
         // Fallback or other OS? Assume unix-like strictness
         #[cfg(not(any(unix, windows)))]
         {
-             if !resolved.starts_with(&self.root) {
+            if !resolved.starts_with(&self.root) {
                 bail!(
                     "Path traversal blocked: {} escapes sandbox {}",
                     original_path,
@@ -219,23 +219,21 @@ impl VfsBackend for LocalFs {
     async fn rename(&self, src: &str, dest: &str) -> Result<()> {
         let src_resolved = self.resolve_existing(src)?;
         let dest_resolved = self.resolve(dest)?;
-        tokio::task::spawn_blocking(move || fs::rename(src_resolved, dest_resolved).map_err(Into::into))
-            .await?
+        tokio::task::spawn_blocking(move || {
+            fs::rename(src_resolved, dest_resolved).map_err(Into::into)
+        })
+        .await?
     }
 
     async fn open_read(&self, path: &str) -> Result<Box<dyn ReadHandle>> {
         let resolved = self.resolve_existing(path)?;
-        let handle = tokio::task::spawn_blocking(move || {
-            FileReadHandle::new(resolved)
-        }).await??;
+        let handle = tokio::task::spawn_blocking(move || FileReadHandle::new(resolved)).await??;
         Ok(Box::new(handle))
     }
 
     async fn open_write(&self, path: &str) -> Result<Box<dyn WriteHandle>> {
         let resolved = self.resolve(path)?;
-        let handle = tokio::task::spawn_blocking(move || {
-            FileWriteHandle::new(resolved)
-        }).await??;
+        let handle = tokio::task::spawn_blocking(move || FileWriteHandle::new(resolved)).await??;
         Ok(Box::new(handle))
     }
 
@@ -269,14 +267,17 @@ impl ReadHandle for FileReadHandle {
         let reader = self.reader.clone();
         let current_offset = self.offset;
         let remaining = self.size.saturating_sub(current_offset);
-        
+
         let chunk = tokio::task::spawn_blocking(move || {
-            let mut guard = reader.lock().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+            let mut guard = reader
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
             let mut buffer = vec![0u8; CHUNK_SIZE.min(remaining as usize)];
             let bytes_read = guard.read(&mut buffer)?;
             buffer.truncate(bytes_read);
             Ok::<_, anyhow::Error>(buffer)
-        }).await??;
+        })
+        .await??;
 
         let bytes_read = chunk.len() as u64;
         let chunk = ReadChunk {
@@ -320,13 +321,16 @@ impl WriteHandle for FileWriteHandle {
         let writer = self.writer.clone();
         let data = data.to_vec();
         let bytes = data.len() as u64;
-        
+
         tokio::task::spawn_blocking(move || {
-            let mut guard = writer.lock().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+            let mut guard = writer
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
             guard.write_all(&data)?;
             Ok::<_, anyhow::Error>(())
-        }).await??;
-        
+        })
+        .await??;
+
         self.bytes_written += bytes;
         Ok(())
     }
@@ -334,10 +338,13 @@ impl WriteHandle for FileWriteHandle {
     async fn close(&mut self) -> Result<()> {
         let writer = self.writer.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = writer.lock().map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
+            let mut guard = writer
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Lock poisoned"))?;
             guard.flush()?;
             Ok::<_, anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
         Ok(())
     }
 
@@ -355,7 +362,7 @@ mod tests {
     async fn test_streaming_read_write() {
         let dir = tempdir().unwrap();
         let fs = LocalFs::new(dir.path());
-        
+
         // Write some data using streaming
         let test_data = b"Hello, streaming world!";
         {
@@ -364,12 +371,12 @@ mod tests {
             writer.close().await.unwrap();
             assert_eq!(writer.bytes_written(), test_data.len() as u64);
         }
-        
+
         // Read it back using streaming
         {
             let mut reader = fs.open_read("test.txt").await.unwrap();
             assert_eq!(reader.size(), Some(test_data.len() as u64));
-            
+
             let chunk = reader.read_chunk().await.unwrap();
             assert_eq!(chunk.data, test_data);
             assert!(chunk.is_last);
@@ -381,7 +388,7 @@ mod tests {
     async fn test_large_file_streaming() {
         let dir = tempdir().unwrap();
         let fs = LocalFs::new(dir.path());
-        
+
         // Write 256KB in chunks
         let chunk_count = 4;
         let chunk_data = vec![0xABu8; CHUNK_SIZE];
@@ -393,12 +400,12 @@ mod tests {
             writer.close().await.unwrap();
             assert_eq!(writer.bytes_written(), (CHUNK_SIZE * chunk_count) as u64);
         }
-        
+
         // Read back and verify
         {
             let mut reader = fs.open_read("large.bin").await.unwrap();
             assert_eq!(reader.size(), Some((CHUNK_SIZE * chunk_count) as u64));
-            
+
             let mut total_read = 0;
             loop {
                 let chunk = reader.read_chunk().await.unwrap();
@@ -411,4 +418,3 @@ mod tests {
         }
     }
 }
-

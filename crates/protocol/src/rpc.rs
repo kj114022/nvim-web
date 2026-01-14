@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 /// MessagePack-RPC Message Type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

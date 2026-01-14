@@ -1,12 +1,16 @@
 # nvim-web Configuration
 # Place at ~/.config/nvim-web/config.toml
 
-# Server settings
 [server]
 # HTTP port for UI and WebSocket
 http_port = 8080
 # Bind address (use 0.0.0.0 for network access)
 bind = "127.0.0.1"
+# WebTransport/QUIC port (requires TLS, enable for lower latency)
+# webtransport_port = 9002
+# TLS certificate and key paths (required for WebTransport)
+# ssl_cert = "/path/to/cert.pem"
+# ssl_key = "/path/to/key.pem"
 
 # Session settings
 [session]
@@ -14,6 +18,14 @@ bind = "127.0.0.1"
 timeout = 300
 # Maximum concurrent sessions
 max_sessions = 10
+
+# Optional: Connect to existing Neovim instance
+# [remote]
+# enabled = true
+# address = "tcp://127.0.0.1:6666" # or "unix:///tmp/nvim.sock"
+# Authentication (per Neovim issue #4443)
+# auth_token = "your-64-char-hex-token"  # Inline token (priority)
+# auth_token_file = "~/.config/nvim-web/auth.token"  # Or from file
 
 # Rate limiting settings
 [rate_limit]
@@ -36,3 +48,44 @@ local_root = ""
 # port = 22
 # user = "alice"
 # # key_path = "~/.ssh/id_rsa"  # Optional, defaults to SSH agent
+
+# OIDC Authentication (Phase 3)
+# Enable for enterprise SSO with Google, Okta, Azure AD, etc.
+# [auth]
+# enabled = true
+# issuer = "https://accounts.google.com"
+# client_id = "your-client-id.apps.googleusercontent.com"
+# client_secret = "your-client-secret"
+# redirect_uri = "https://your-domain.com/auth/callback"
+# scopes = ["openid", "email", "profile"]
+#
+# # Session cookie settings
+# [auth.session]
+# cookie_name = "nvim_web_session"
+# max_age_secs = 86400  # 24 hours
+# secure = true         # Require HTTPS
+# http_only = true      # Prevent JS access
+#
+# # BeyondCorp access policy (optional)
+# [auth.policy]
+# allowed_domains = ["example.com", "corp.example.com"]
+# allowed_groups = ["engineering", "devops"]
+# # allowed_ips = ["10.0.0.0/8", "192.168.1.0/24"]
+
+# Kubernetes Pod-Per-Session Mode (Phase 4)
+# Enable for horizontal scaling with isolated session pods
+# [kubernetes]
+# enabled = true
+# namespace = "nvim-web"
+# image = "ghcr.io/your-org/nvim-web-session:latest"
+# storage_class = "standard"
+# storage_size = "1Gi"
+# session_timeout_secs = 3600  # 1 hour
+# max_sessions = 100
+#
+# # Pod resource limits
+# [kubernetes.resources]
+# cpu_request = "100m"
+# cpu_limit = "1"
+# memory_request = "128Mi"
+# memory_limit = "512Mi"

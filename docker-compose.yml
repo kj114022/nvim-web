@@ -1,4 +1,4 @@
-# Development environment with SSH test server
+# Development environment with SSH test server and optional Kubernetes
 version: '3.8'
 
 services:
@@ -6,11 +6,17 @@ services:
   nvim-web:
     build: .
     ports:
-      - "8080:8080"
-      - "9001:9001"
+      - "8080:8080"   # HTTP/WebSocket
+      - "9001:9001"   # Terminal WebSocket
+      - "9002:9002"   # WebTransport (QUIC)
     volumes:
       - .:/workspace:ro
     working_dir: /workspace
+    environment:
+      - NVIM_WEB_BIND=0.0.0.0
+      - NVIM_WEB_HTTP_PORT=8080
+      - NVIM_WEB_WEBTRANSPORT_PORT=9002
+      - RUST_LOG=info
 
   # SSH test server for VFS integration tests
   ssh-test:
@@ -32,3 +38,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # Mock OIDC provider for auth testing (optional)
+  # mock-oidc:
+  #   image: ghcr.io/navikt/mock-oauth2-server:2.1.0
+  #   ports:
+  #     - "8888:8888"
+  #   environment:
+  #     - JSON_CONFIG_PATH=/config.json
+  #   volumes:
+  #     - ./tests/oidc-config.json:/config.json:ro

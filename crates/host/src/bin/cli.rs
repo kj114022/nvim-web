@@ -97,9 +97,7 @@ fn open_project(path: &std::path::Path) {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         eprintln!();
-        eprintln!(
-            "  \x1b[1;31m[error]\x1b[0m API error: {status} - {body}"
-        );
+        eprintln!("  \x1b[1;31m[error]\x1b[0m API error: {status} - {body}");
         return;
     }
 

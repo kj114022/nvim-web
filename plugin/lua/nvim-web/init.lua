@@ -89,9 +89,17 @@ local function git_complete(arg_lead, cmd_line, cursor_pos)
 end
 
 function M.setup()
-  -- VFS path shortcut command: :E @local/path, :E @browser/path, :E @ssh/path
+  -- :E [path] - Open file with VFS backend shortcut
+  -- If no path given, trigger browser file picker
   vim.api.nvim_create_user_command("E", function(args)
     local path = args.args
+    
+    -- If no path given, trigger browser file picker
+    if path == "" then
+      vim.rpcnotify(1, 'open_file_picker')
+      vim.notify("Opening file picker...", vim.log.levels.INFO)
+      return
+    end
     
     -- Expand @backend/ shortcuts to vfs:// URIs
     if path:match("^@local/") then
@@ -100,10 +108,18 @@ function M.setup()
       path = "vfs://browser/" .. path:sub(10)
     elseif path:match("^@ssh/") then
       path = "vfs://ssh/" .. path:sub(6)
+    elseif path:match("^@github/") then
+      path = "vfs://github/" .. path:sub(9)
     end
     
     vim.cmd("edit " .. vim.fn.fnameescape(path))
-  end, { nargs = 1, complete = "file", desc = "Open file with VFS backend shortcut" })
+  end, { nargs = "?", complete = "file", desc = "Open file (no args = file picker)" })
+
+  -- :Edit - Explicit file picker trigger (alias)
+  vim.api.nvim_create_user_command("Edit", function()
+    vim.rpcnotify(1, 'open_file_picker')
+    vim.notify("Opening file picker...", vim.log.levels.INFO)
+  end, { desc = "Open browser file picker" })
 
   -- Show current buffer's VFS backend and path
   vim.api.nvim_create_user_command("VfsStatus", function()
@@ -247,6 +263,49 @@ function M.setup()
   })
 
   ---------------------------------------------------------------------------
+  -- Large File Fast Mode (Performance Optimization)
+  ---------------------------------------------------------------------------
+  
+  local large_file_group = vim.api.nvim_create_augroup("NvimWebLargeFile", { clear = true })
+  
+  -- Threshold for "large file" mode (1MB)
+  local LARGE_FILE_THRESHOLD = 1024 * 1024
+  
+  -- Disable heavy features for large files
+  vim.api.nvim_create_autocmd("BufReadPre", {
+    group = large_file_group,
+    callback = function(args)
+      local file = args.file
+      local ok, stats = pcall(vim.loop.fs_stat, file)
+      
+      if ok and stats and stats.size > LARGE_FILE_THRESHOLD then
+        -- Mark buffer as large file
+        vim.b[args.buf].large_file = true
+        
+        -- Disable treesitter
+        vim.treesitter.stop(args.buf)
+        
+        -- Disable syntax highlighting
+        vim.cmd("syntax off")
+        
+        -- Disable other expensive plugins
+        vim.opt_local.foldmethod = "manual"
+        vim.opt_local.spell = false
+        vim.opt_local.swapfile = false
+        vim.opt_local.undofile = false
+        vim.opt_local.breakindent = false
+        vim.opt_local.colorcolumn = ""
+        vim.opt_local.list = false
+        
+        -- Notify user
+        local size_mb = string.format("%.1fMB", stats.size / 1024 / 1024)
+        vim.notify("Large file (" .. size_mb .. "): Fast mode enabled", vim.log.levels.INFO)
+      end
+    end,
+    desc = "Enable fast mode for large files",
+  })
+
+  ---------------------------------------------------------------------------
   -- Netrw and Clipboard Configuration
   ---------------------------------------------------------------------------
   
@@ -283,7 +342,81 @@ function M.setup()
     },
     cache_enabled = 1,
   }
+
+  ---------------------------------------------------------------------------
+  -- Browser Integration Commands (Phase 12.3)
+  ---------------------------------------------------------------------------
+
+  -- :WebShare - Copy session URL to clipboard for sharing
+  vim.api.nvim_create_user_command("WebShare", function(args)
+    local viewer_mode = args.bang and "?viewer=1" or ""
+    -- Request session URL from host
+    local ok, session_id = pcall(vim.rpcrequest, 1, 'get_session_id')
+    if ok and session_id then
+      local url = "https://nvim-web.app/?session=" .. session_id .. viewer_mode
+      -- Copy to clipboard via browser
+      vim.fn.setreg('+', url)
+      if args.bang then
+        vim.notify("Read-only link copied: " .. url, vim.log.levels.INFO)
+      else
+        vim.notify("Session link copied: " .. url, vim.log.levels.INFO)
+      end
+    else
+      vim.notify("Could not get session ID", vim.log.levels.WARN)
+    end
+  end, { bang = true, desc = "Copy session share URL (! for read-only)" })
+
+  -- :WebNotify - Send notification to browser
+  vim.api.nvim_create_user_command("WebNotify", function(args)
+    local message = args.args
+    local level = args.bang and "warn" or "info"
+    vim.rpcnotify(1, 'browser_notify', { message = message, level = level })
+  end, { nargs = 1, bang = true, desc = "Show browser notification (! for warning)" })
+
+  -- :WebPrint - Trigger browser print dialog
+  vim.api.nvim_create_user_command("WebPrint", function()
+    vim.rpcnotify(1, 'browser_print')
+    vim.notify("Print dialog triggered", vim.log.levels.INFO)
+  end, { desc = "Open browser print dialog" })
+
+  -- :WebFullscreen - Toggle browser fullscreen
+  vim.api.nvim_create_user_command("WebFullscreen", function()
+    vim.rpcnotify(1, 'browser_fullscreen')
+  end, { desc = "Toggle browser fullscreen" })
+
+  -- :WebViewers - Show connected viewers (for collaboration)
+  vim.api.nvim_create_user_command("WebViewers", function()
+    local ok, viewers = pcall(vim.rpcrequest, 1, 'get_viewers')
+    if ok and type(viewers) == 'table' then
+      if #viewers == 0 then
+        vim.notify("No viewers connected", vim.log.levels.INFO)
+      else
+        vim.notify("Connected viewers: " .. #viewers, vim.log.levels.INFO)
+        for i, v in ipairs(viewers) do
+          print(i .. ". " .. (v.name or v.id or "anonymous"))
+        end
+      end
+    else
+      vim.notify("Could not get viewer list", vim.log.levels.WARN)
+    end
+  end, { desc = "List connected session viewers" })
+
 end
 
+-- Status function for statusline integration
+-- Usage: set statusline+=%{nvim_web#status()}
+function M.status()
+  local name = vim.api.nvim_buf_get_name(0)
+  if name:match("^vfs://") then
+    local backend = name:match("^vfs://([^/]+)")
+    return "[" .. (backend or "vfs"):upper() .. "]"
+  end
+  return ""
+end
+
+-- Expose status for vimscript: nvim_web#status()
+_G.nvim_web = M
+
 return M
+
 

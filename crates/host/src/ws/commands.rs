@@ -25,6 +25,7 @@ use crate::vfs_handlers;
 /// Returns optional response bytes to send back to browser
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::significant_drop_tightening)]
+#[tracing::instrument(skip(manager, fs_registry, vfs_manager, data), level = "debug")]
 pub async fn handle_browser_message(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
@@ -57,9 +58,24 @@ pub async fn handle_browser_message(
             }
         }
 
-        // Legacy string-based messages
-        if arr.len() >= 2 {
-            return handle_legacy_message(session_id, manager, &arr).await;
+        // Legacy string-based messages (including terminal and LLM)
+        if arr.len() >= 1 {
+            if let Value::String(method) = &arr[0] {
+                // Check for terminal messages
+                if let Some(m) = method.as_str() {
+                    if m.starts_with("terminal_") {
+                        // Terminal messages need output channel - pass None for now
+                        // Real integration would pass the WebSocket sender
+                        return handle_terminal_message(session_id, &arr, None).await;
+                    }
+                    if m.starts_with("llm_") {
+                        // LLM messages handled separately via RPC
+                    }
+                }
+            }
+            if arr.len() >= 2 {
+                return handle_legacy_message(session_id, manager, &arr).await;
+            }
         }
     }
 
@@ -67,6 +83,7 @@ pub async fn handle_browser_message(
 }
 
 /// Handle RPC request: [0, id, method, params] -> [1, id, error, result]
+#[tracing::instrument(skip(manager, vfs_manager, arr), fields(method), level = "debug")]
 async fn handle_rpc_request(
     session_id: &str,
     manager: &Arc<RwLock<AsyncSessionManager>>,
@@ -89,13 +106,13 @@ async fn handle_rpc_request(
         "vfs_write" if vfs_manager.is_some() => {
             handle_vfs_write(session_id, manager, vfs_manager.unwrap(), &params).await
         }
-        "vfs_list" if vfs_manager.is_some() => {
-            handle_vfs_list(vfs_manager.unwrap(), &params).await
-        }
+        "vfs_list" if vfs_manager.is_some() => handle_vfs_list(vfs_manager.unwrap(), &params).await,
         "settings_get" => handle_settings_get(&params),
         "settings_set" => handle_settings_set(&params),
         "settings_all" => handle_settings_all(),
         "get_cwd_info" => handle_get_cwd_info(session_id, manager).await,
+        "get_session_id" => Some((Value::Nil, Value::String(session_id.to_string().into()))),
+        "tool_exec" => handle_tool_exec(&params).await,
         _ => None, // Not a VFS/settings method, forward to Neovim
     };
 
@@ -135,8 +152,11 @@ async fn handle_vfs_open(
         let mgr = manager.read().await;
         let session = mgr.get_session(session_id)?;
         let vfs = vfs_manager.read().await;
-        vfs_handlers::handle_open_vfs(vfs_path, session, &vfs).await.ok()
-    }.await;
+        vfs_handlers::handle_open_vfs(vfs_path, session, &vfs)
+            .await
+            .ok()
+    }
+    .await;
 
     result.map(|bufnr| (Value::Nil, Value::Integer(bufnr.into())))
 }
@@ -155,8 +175,11 @@ async fn handle_vfs_write(
         let mgr = manager.read().await;
         let session = mgr.get_session(session_id)?;
         let vfs = vfs_manager.read().await;
-        vfs_handlers::handle_write_vfs(vfs_path, bufnr, session, &vfs).await.ok()
-    }.await;
+        vfs_handlers::handle_write_vfs(vfs_path, bufnr, session, &vfs)
+            .await
+            .ok()
+    }
+    .await;
 
     result.map(|()| (Value::Nil, Value::Nil))
 }
@@ -188,7 +211,9 @@ fn handle_settings_get(params: &[Value]) -> Option<(Value, Value)> {
 
     Some(match SettingsStore::new() {
         Ok(store) => {
-            let value = store.get(key).map_or(Value::Nil, |v| Value::String(v.into()));
+            let value = store
+                .get(key)
+                .map_or(Value::Nil, |v| Value::String(v.into()));
             (Value::Nil, value)
         }
         Err(e) => (Value::String(e.to_string().into()), Value::Nil),
@@ -261,7 +286,9 @@ async fn handle_get_cwd_info(
 
     // Detect git root and branch
     let git_root = git::find_git_root(Path::new(&cwd));
-    let git_branch = git_root.as_ref().and_then(|root| git::get_current_branch(root));
+    let git_branch = git_root
+        .as_ref()
+        .and_then(|root| git::get_current_branch(root));
 
     // Determine backend from file path
     let backend = if current_file.starts_with("vfs://browser/") {
@@ -275,8 +302,14 @@ async fn handle_get_cwd_info(
     // Build response map
     let map = vec![
         (Value::String("cwd".into()), Value::String(cwd.into())),
-        (Value::String("file".into()), Value::String(current_file.into())),
-        (Value::String("backend".into()), Value::String(backend.into())),
+        (
+            Value::String("file".into()),
+            Value::String(current_file.into()),
+        ),
+        (
+            Value::String("backend".into()),
+            Value::String(backend.into()),
+        ),
         (
             Value::String("git_branch".into()),
             git_branch.map_or(Value::Nil, |b| Value::String(b.into())),
@@ -284,6 +317,49 @@ async fn handle_get_cwd_info(
     ];
 
     Some((Value::Nil, Value::Map(map)))
+}
+
+/// Handle tool_exec(command, args, input) -> {stdout, stderr, exit_code}
+/// Universal pipe for executing arbitrary CLI tools
+async fn handle_tool_exec(params: &[Value]) -> Option<(Value, Value)> {
+    use crate::pipe;
+
+    let command = params.first().and_then(|v| v.as_str()).unwrap_or("");
+    let args: Vec<String> = params
+        .get(1)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let input = params.get(2).and_then(|v| v.as_str()).unwrap_or("");
+
+    if command.is_empty() {
+        return Some((Value::String("Missing command".into()), Value::Nil));
+    }
+
+    match pipe::run_pipe(command, &args, input, None).await {
+        Ok(result) => {
+            let map = vec![
+                (
+                    Value::String("stdout".into()),
+                    Value::String(result.stdout.into()),
+                ),
+                (
+                    Value::String("stderr".into()),
+                    Value::String(result.stderr.into()),
+                ),
+                (
+                    Value::String("exit_code".into()),
+                    Value::Integer(result.exit_code.into()),
+                ),
+            ];
+            Some((Value::Nil, Value::Map(map)))
+        }
+        Err(e) => Some((Value::String(e.to_string().into()), Value::Nil)),
+    }
 }
 
 /// Handle FS response from browser: [3, id, ok, result]
@@ -300,7 +376,9 @@ async fn handle_fs_response(
             registry.resolve(id, Ok(result.clone())).await;
         } else {
             let err_msg = result.as_str().unwrap_or("Unknown FS error");
-            registry.resolve(id, Err(anyhow::anyhow!("{err_msg}"))).await;
+            registry
+                .resolve(id, Err(anyhow::anyhow!("{err_msg}")))
+                .await;
         }
     }
     Ok(None)
@@ -321,8 +399,8 @@ async fn handle_notification(
                     let response_session_id = params[2].as_str();
 
                     if response_session_id != Some(session_id) {
-                         tracing::warn!(expected = %session_id, got = ?response_session_id, "Blocked clipboard response from wrong session");
-                         return Ok(None);
+                        tracing::warn!(expected = %session_id, got = ?response_session_id, "Blocked clipboard response from wrong session");
+                        return Ok(None);
                     }
 
                     let mgr = manager.read().await;
@@ -365,6 +443,56 @@ async fn handle_legacy_message(
                     }
                 }
             }
+
+            Some("mouse") => {
+                // ["mouse", button, action, modifier, row, col]
+                if arr.len() >= 6 {
+                    let button = arr[1].as_str().unwrap_or("left");
+                    let action = arr[2].as_str().unwrap_or("press");
+                    let modifier = arr[3].as_str().unwrap_or("");
+                    let row = arr[4].as_i64().unwrap_or(0);
+                    let col = arr[5].as_i64().unwrap_or(0);
+
+                    // grid=0 for global coordinates
+                    let _ = session
+                        .rpc_call(
+                            "nvim_input_mouse",
+                            vec![
+                                Value::String(button.into()),
+                                Value::String(action.into()),
+                                Value::String(modifier.into()),
+                                Value::Integer(0.into()),
+                                Value::Integer(row.into()),
+                                Value::Integer(col.into()),
+                            ],
+                        )
+                        .await;
+                }
+            }
+            Some("scroll") => {
+                // ["scroll", direction, modifier, row, col]
+                if arr.len() >= 5 {
+                    let direction = arr[1].as_str().unwrap_or("up");
+                    let modifier = arr[2].as_str().unwrap_or("");
+                    let row = arr[3].as_i64().unwrap_or(0);
+                    let col = arr[4].as_i64().unwrap_or(0);
+
+                    // button="wheel", action=direction
+                    let _ = session
+                        .rpc_call(
+                            "nvim_input_mouse",
+                            vec![
+                                Value::String("wheel".into()),
+                                Value::String(direction.into()),
+                                Value::String(modifier.into()),
+                                Value::Integer(0.into()),
+                                Value::Integer(row.into()),
+                                Value::Integer(col.into()),
+                            ],
+                        )
+                        .await;
+                }
+            }
             Some("input_mouse") => {
                 // Multigrid mouse input: ["input_mouse", button, action, modifier, grid, row, col]
                 if arr.len() >= 7 {
@@ -374,23 +502,200 @@ async fn handle_legacy_message(
                     let grid = arr[4].as_i64().unwrap_or(1);
                     let row = arr[5].as_i64().unwrap_or(0);
                     let col = arr[6].as_i64().unwrap_or(0);
-                    
+
                     // Call nvim_input_mouse(button, action, modifier, grid, row, col)
-                    let _ = session.rpc_call(
-                        "nvim_input_mouse",
-                        vec![
-                            Value::String(button.into()),
-                            Value::String(action.into()),
-                            Value::String(modifier.into()),
-                            Value::Integer(grid.into()),
-                            Value::Integer(row.into()),
-                            Value::Integer(col.into()),
-                        ],
-                    ).await;
+                    let _ = session
+                        .rpc_call(
+                            "nvim_input_mouse",
+                            vec![
+                                Value::String(button.into()),
+                                Value::String(action.into()),
+                                Value::String(modifier.into()),
+                                Value::Integer(grid.into()),
+                                Value::Integer(row.into()),
+                                Value::Integer(col.into()),
+                            ],
+                        )
+                        .await;
+                }
+            }
+            Some("file_drop") => {
+                // ["file_drop", filename, data]
+                if arr.len() >= 3 {
+                    // 1. Parse Args
+                    let filename = arr[1].as_str().unwrap_or("dropped_file");
+                    let data = if let Value::Binary(bytes) = &arr[2] {
+                        bytes.clone()
+                    } else {
+                        vec![]
+                    };
+
+                    if !data.is_empty() {
+                        // 2. Get CWD from Neovim to save file in correct location
+                        let cwd_res = session
+                            .rpc_call(
+                                "nvim_call_function",
+                                vec![Value::String("getcwd".into()), Value::Array(vec![])],
+                            )
+                            .await;
+
+                        let cwd = cwd_res
+                            .ok()
+                            .and_then(|v| v.as_str().map(ToString::to_string))
+                            .unwrap_or_else(|| ".".to_string());
+
+                        let path = std::path::Path::new(&cwd).join(filename);
+
+                        // 3. Write file to disk
+                        // Note: Using standard fs for simplicity, but in async context tokio::fs is better
+                        // multithreaded runtime makes this acceptable for small files
+                        if let Err(e) = std::fs::write(&path, &data) {
+                            eprintln!("Failed to write dropped file: {e}");
+                        } else {
+                            eprintln!("Saved dropped file to: {}", path.display());
+
+                            // 4. Open file in Neovim
+                            let _ = session
+                                .rpc_call(
+                                    "nvim_command",
+                                    vec![Value::String(format!("edit {}", path.display()).into())],
+                                )
+                                .await;
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
     Ok(None)
+}
+
+// ============================================================================
+// Terminal PTY message handlers
+// ============================================================================
+
+use crate::terminal::TerminalManager;
+use once_cell::sync::Lazy;
+use std::sync::Mutex as StdMutex;
+
+/// Global terminal manager (terminals are tied to sessions)
+static TERMINAL_MANAGER: Lazy<StdMutex<TerminalManager>> =
+    Lazy::new(|| StdMutex::new(TerminalManager::new()));
+
+/// Handle terminal-related messages from browser
+/// Returns optional output message to send back, plus spawns output streaming task
+pub async fn handle_terminal_message(
+    session_id: &str,
+    arr: &[Value],
+    output_tx: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+) -> Result<Option<Vec<u8>>> {
+    if let Value::String(method) = &arr[0] {
+        match method.as_str() {
+            Some("terminal_spawn") => {
+                // ["terminal_spawn", cols, rows]
+                let cols = arr.get(1).and_then(Value::as_u64).unwrap_or(80) as u16;
+                let rows = arr.get(2).and_then(Value::as_u64).unwrap_or(24) as u16;
+
+                let result = {
+                    let mut mgr = TERMINAL_MANAGER.lock().unwrap();
+                    mgr.create_session(session_id, cols, rows)
+                };
+
+                match result {
+                    Ok(()) => {
+                        // Start streaming output to browser
+                        if let Some(tx) = output_tx {
+                            let sid = session_id.to_string();
+                            tokio::spawn(async move {
+                                stream_terminal_output(&sid, tx).await;
+                            });
+                        }
+
+                        // Send success response
+                        let response = Value::Array(vec![
+                            Value::String("terminal_spawned".into()),
+                            Value::Boolean(true),
+                        ]);
+                        let mut bytes = Vec::new();
+                        rmpv::encode::write_value(&mut bytes, &response)?;
+                        return Ok(Some(bytes));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to spawn terminal: {}", e);
+                        let response = Value::Array(vec![
+                            Value::String("terminal_spawned".into()),
+                            Value::Boolean(false),
+                            Value::String(e.to_string().into()),
+                        ]);
+                        let mut bytes = Vec::new();
+                        rmpv::encode::write_value(&mut bytes, &response)?;
+                        return Ok(Some(bytes));
+                    }
+                }
+            }
+            Some("terminal_input") => {
+                // [\"terminal_input\", data_bytes]
+                let session_arc = {
+                    let mgr = TERMINAL_MANAGER.lock().unwrap();
+                    mgr.get_session(session_id)
+                };
+
+                if let Some(session) = session_arc {
+                    let data_vec = if let Some(Value::Binary(data)) = arr.get(1) {
+                        Some(data.clone())
+                    } else if let Some(Value::String(s)) = arr.get(1) {
+                        s.as_str().map(|t| t.as_bytes().to_vec())
+                    } else {
+                        None
+                    };
+
+                    if let Some(data) = data_vec {
+                        let sess = session.lock().await;
+                        let _ = sess.send_input(data).await;
+                    }
+                }
+            }
+            Some("terminal_close") => {
+                // ["terminal_close"]
+                let mut mgr = TERMINAL_MANAGER.lock().unwrap();
+                mgr.remove_session(session_id);
+                tracing::info!("Terminal closed for session: {}", session_id);
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Stream terminal output to browser via WebSocket
+async fn stream_terminal_output(session_id: &str, tx: tokio::sync::mpsc::Sender<Vec<u8>>) {
+    use crate::terminal::TerminalSession;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let session: Option<Arc<Mutex<TerminalSession>>> = {
+        let mgr = TERMINAL_MANAGER.lock().unwrap();
+        mgr.get_session(session_id)
+    };
+
+    if let Some(session) = session {
+        let mut sess = session.lock().await;
+        if let Some(mut rx) = sess.take_output_rx() {
+            drop(sess);
+            while let Some(data) = rx.recv().await {
+                // Send as ["terminal_output", binary_data]
+                let msg = Value::Array(vec![
+                    Value::String("terminal_output".into()),
+                    Value::Binary(data),
+                ]);
+                let mut bytes = Vec::new();
+                if rmpv::encode::write_value(&mut bytes, &msg).is_ok() {
+                    if tx.send(bytes).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }

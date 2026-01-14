@@ -1,0 +1,44 @@
+{
+    "version": "0.1.0",
+    "description": "Neovim in the Browser - Real Neovim via WebSocket/WebTransport",
+    "homepage": "https://github.com/kj114022/nvim-web",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/kj114022/nvim-web/releases/download/v0.1.0/nvim-web-windows-x86_64.zip",
+            "hash": "PLACEHOLDER_SHA256",
+            "bin": "nvim-web.exe",
+            "shortcuts": [
+                ["nvim-web.exe", "nvim-web"]
+            ]
+        }
+    },
+    "depends": "neovim",
+    "suggest": {
+        "ripgrep": "ripgrep"
+    },
+    "checkver": {
+        "github": "https://github.com/kj114022/nvim-web"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/kj114022/nvim-web/releases/download/v$version/nvim-web-windows-x86_64.zip"
+            }
+        }
+    },
+    "notes": [
+        "nvim-web is a single binary with all UI assets embedded.",
+        "",
+        "To start the server:",
+        "  nvim-web",
+        "",
+        "Then open http://localhost:8080 in your browser.",
+        "",
+        "Features:",
+        "  - WebSocket and WebTransport (QUIC) connections",
+        "  - Real-time collaborative editing (CRDTs)",
+        "  - OIDC authentication support",
+        "  - Kubernetes pod-per-session scaling"
+    ]
+}

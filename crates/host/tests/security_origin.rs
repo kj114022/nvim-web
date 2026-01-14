@@ -20,8 +20,8 @@ async fn test_origin_validation() {
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager, 9003, None, None).await {
-            eprintln!("Server error: {}", e);
+        if let Err(e) = serve_multi_async(manager, 9003, None, None, None, None).await {
+            eprintln!("Server error: {e}");
         }
     });
 

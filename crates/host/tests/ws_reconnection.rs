@@ -19,8 +19,7 @@
 /// Placeholder test to verify the test module compiles
 #[test]
 fn test_ws_reconnection_module_compiles() {
-    // This test simply verifies the module is included in the test suite
-    assert!(true, "WebSocket reconnection test module loaded");
+    // This test verifies the module is included in the test suite
 }
 
 /// Documents the expected reconnection behavior
@@ -29,18 +28,18 @@ fn test_ws_reconnection_module_compiles() {
 fn test_reconnection_behavior_documented() {
     println!("=== WebSocket Reconnection Behavior ===");
     println!("Expected: Browser refresh should reconnect without blank screen");
-    println!("");
+    println!();
     println!("Root Cause (fixed in 07d19e6):");
     println!("- Neovim reader thread was spawned per bridge() call");
     println!("- Channel died when bridge() exited");
     println!("- Old thread couldn't send to new channel");
-    println!("");
+    println!();
     println!("Solution:");
     println!("- Reader thread spawned once in serve()");
     println!("- Channel shared via Arc<Mutex<Receiver>>");
     println!("- Stale messages drained on reconnection");
     println!("- Full redraw forced with nvim_ui_try_resize");
-    println!("");
+    println!();
     println!("Manual Test Steps:");
     println!("1. Start host: ./target/release/nvim-web-host");
     println!("2. Open http://localhost:8080");

@@ -17,11 +17,16 @@ js-sys.workspace = true
 rmpv.workspace = true
 getrandom = { version = "0.2", features = ["js"] }
 nvim-web-protocol = { path = "../protocol" }
+wgpu = { version = "23", features = ["webgl"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.3"
+console_error_panic_hook = "0.1"
 
 [dependencies.web-sys]
 workspace = true
 features = [
     "CanvasRenderingContext2d",
+    "CanvasGradient",
     "ClipboardEvent",
     "CloseEvent",
     "CssStyleDeclaration",
@@ -32,8 +37,9 @@ features = [
     "Event",
     "History",
     "HtmlElement",
+    "HtmlImageElement",
+    "HtmlInputElement",
     "HtmlCanvasElement",
-    "Location",
     "Storage",
     "Window",
     "WebSocket",
@@ -52,6 +58,10 @@ features = [
     "console",
     "TextMetrics",
     "ResizeObserver",
+    "Location",
+    "Navigator",
+    "OffscreenCanvas",
+    "OffscreenCanvasRenderingContext2d",
     "ResizeObserverEntry",
     "DomRectReadOnly",
     "Navigator",
@@ -64,9 +74,29 @@ features = [
     "DomTokenList",
     "CustomEvent",
     "CustomEventInit",
+    "OffscreenCanvas",
+    "OffscreenCanvasRenderingContext2d",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+    "DedicatedWorkerGlobalScope",
+    "ImageData",
+    "Performance",
+    "DragEvent",
+    "FileReader",
+    "FileList",
+    "File",
+    "FontFace",
+    "FontFaceSet",
+    "FontFaceLoadStatus",
+    "StorageManager",
+    "FileSystemHandle",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemWritableFileStream",
+    "FileSystemGetFileOptions",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemCreateWritableOptions",
 ]
-
-[lints]
-workspace = true
 
 

@@ -25,3 +25,15 @@ tests/fixtures/large_*
 
 # WASM build (for rebuild)
 crates/ui/pkg/
+crates/ui-window/pkg/
+crates/ui-worker/pkg/
+
+# Kubernetes secrets and local state
+k8s/*.secret.yaml
+k8s/*.local.yaml
+
+# Documentation build
+docs/_build/
+
+# Node modules
+node_modules/

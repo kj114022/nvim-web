@@ -97,4 +97,3 @@ async fn empty_file_local() {
 }
 
 // Browser tests temporarily disabled - pending WebSocket integration
-// TODO: Re-enable once BrowserFsBackend is wired to ws.rs

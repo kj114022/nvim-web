@@ -47,8 +47,14 @@ pub fn api_router() -> Router<AppState> {
         .route("/open", post(open_project))
         .route("/claim/:token", get(claim_token))
         .route("/token/:token", get(get_token_info))
-        .route("/share/:token", get(use_share_link).delete(revoke_share_link))
-        .route("/snapshot/:id", get(get_snapshot).delete(delete_snapshot_handler))
+        .route(
+            "/share/:token",
+            get(use_share_link).delete(revoke_share_link),
+        )
+        .route(
+            "/snapshot/:id",
+            get(get_snapshot).delete(delete_snapshot_handler),
+        )
         .route("/ssh/test", post(test_ssh_connection))
         .route("/ssh/connect", post(connect_ssh))
         .route("/ssh/disconnect", post(disconnect_ssh))
@@ -202,10 +208,7 @@ async fn test_ssh_connection(Json(payload): Json<SshConnectRequest>) -> impl Int
     );
 
     match SshFsBackend::test_connection(&uri, payload.password.as_deref()) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "success": true })),
-        ),
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -227,7 +230,11 @@ async fn connect_ssh(
     match SshFsBackend::connect_with_password(&uri, payload.password.as_deref()) {
         Ok(_backend) => {
             // Store the active SSH connection in session manager
-            state.session_manager.write().await.set_active_ssh(Some(uri.clone()));
+            state
+                .session_manager
+                .write()
+                .await
+                .set_active_ssh(Some(uri.clone()));
 
             (
                 StatusCode::OK,
@@ -247,10 +254,7 @@ async fn connect_ssh(
 async fn disconnect_ssh(State(state): State<AppState>) -> impl IntoResponse {
     state.session_manager.write().await.set_active_ssh(None);
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "success": true })),
-    )
+    (StatusCode::OK, Json(serde_json::json!({ "success": true })))
 }
 
 // Share link handlers
@@ -332,7 +336,10 @@ async fn list_snapshots(Path(session_id): Path<String>) -> impl IntoResponse {
 async fn get_snapshot(Path(id): Path<String>) -> impl IntoResponse {
     match crate::sharing::get_snapshot(&id) {
         Some(snap) => (StatusCode::OK, Json(serde_json::to_value(snap).unwrap())),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "not found" }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not found" })),
+        ),
     }
 }
 

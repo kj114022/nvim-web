@@ -1,0 +1,41 @@
+# Maintainer: nvim-web contributors <nvim-web@example.com>
+pkgname=nvim-web
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Neovim in the Browser - Real Neovim via WebSocket/WebTransport"
+arch=('x86_64' 'aarch64')
+url="https://github.com/kj114022/nvim-web"
+license=('MIT')
+depends=('neovim>=0.9.0' 'openssl' 'ca-certificates')
+makedepends=('rust' 'cargo')
+optdepends=(
+    'ripgrep: fast search support'
+    'git: version control integration'
+    'tree-sitter: enhanced syntax highlighting'
+)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/kj114022/nvim-web/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    cargo build --release -p nvim-web-host
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+
+    # Binary
+    install -Dm755 "target/release/nvim-web-host" "$pkgdir/usr/bin/nvim-web"
+
+    # Config
+    install -Dm644 "config.example.toml" "$pkgdir/etc/nvim-web/config.example.toml"
+
+    # Documentation
+    install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    # Docs
+    for doc in docs/*.md; do
+        install -Dm644 "$doc" "$pkgdir/usr/share/doc/$pkgname/docs/$(basename $doc)"
+    done
+}

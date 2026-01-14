@@ -36,13 +36,9 @@ fn boxed_remove_dir_all<'a>(
 }
 
 /// Recursively copy a directory and its contents
-pub async fn copy_dir_all(
-    backend: &dyn VfsBackend, 
-    src: &str, 
-    dest: &str
-) -> Result<()> {
+pub async fn copy_dir_all(backend: &dyn VfsBackend, src: &str, dest: &str) -> Result<()> {
     let stats = backend.stat(src).await?;
-    
+
     if stats.is_dir {
         if !backend.exists(dest).await? {
             backend.create_dir_all(dest).await?;
@@ -52,10 +48,10 @@ pub async fn copy_dir_all(
         for entry in entries {
             let src_entry = Path::new(src).join(&entry);
             let dest_entry = Path::new(dest).join(&entry);
-            
+
             let src_str = src_entry.to_str().context("Invalid src path")?;
             let dest_str = dest_entry.to_str().context("Invalid dest path")?;
-            
+
             // Recursive copy
             // Note: Box::pin needed for async recursion if not using async-recursion crate
             // But here we are just defining the logic. To allow recursion in async fn,
@@ -70,9 +66,9 @@ pub async fn copy_dir_all(
         }
     } else {
         // It's a file
-         backend.copy(src, dest).await?;
+        backend.copy(src, dest).await?;
     }
-    
+
     Ok(())
 }
 
@@ -87,9 +83,9 @@ fn boxed_copy_dir_all<'a>(
     Box::pin(async move {
         // Re-implement logic here to avoid circular dep with copy_dir_all
         // purely for the boxing wrapper
-        
-         let stats = backend.stat(&src).await?;
-         if stats.is_dir {
+
+        let stats = backend.stat(&src).await?;
+        if stats.is_dir {
             if !backend.exists(&dest).await? {
                 backend.create_dir_all(&dest).await?;
             }
@@ -98,16 +94,17 @@ fn boxed_copy_dir_all<'a>(
             for entry in entries {
                 let src_path = Path::new(&src).join(&entry);
                 let dest_path = Path::new(&dest).join(&entry);
-                
+
                 boxed_copy_dir_all(
-                    backend, 
-                    src_path.to_str().unwrap().to_string(), 
-                    dest_path.to_str().unwrap().to_string()
-                ).await?;
+                    backend,
+                    src_path.to_str().unwrap().to_string(),
+                    dest_path.to_str().unwrap().to_string(),
+                )
+                .await?;
             }
-         } else {
-             backend.copy(&src, &dest).await?;
-         }
-         Ok(())
+        } else {
+            backend.copy(&src, &dest).await?;
+        }
+        Ok(())
     })
 }

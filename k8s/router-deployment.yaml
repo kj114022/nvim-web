@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nvim-web-router
+  namespace: nvim-web
+  labels:
+    app.kubernetes.io/name: nvim-web
+    app.kubernetes.io/component: router
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nvim-web
+      app.kubernetes.io/component: router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nvim-web
+        app.kubernetes.io/component: router
+    spec:
+      serviceAccountName: nvim-web-router
+      containers:
+        - name: router
+          image: ghcr.io/nvim-web/router:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: ws
+              containerPort: 9001
+              protocol: TCP
+          env:
+            - name: NVIM_WEB_MODE
+              value: "router"
+            - name: NVIM_WEB_K8S_ENABLED
+              value: "true"
+            - name: NVIM_WEB_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+      securityContext:
+        fsGroup: 1000

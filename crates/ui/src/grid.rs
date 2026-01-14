@@ -6,7 +6,7 @@ pub struct Cell {
     pub ch: char,
     pub hl_id: Option<u32>,
     pub selected: bool,
-    pub dirty: bool,  // Track if cell needs redraw
+    pub dirty: bool, // Track if cell needs redraw
 }
 
 impl Cell {
@@ -15,7 +15,7 @@ impl Cell {
             ch: ' ',
             hl_id: None,
             selected: false,
-            dirty: true,  // New cells are dirty
+            dirty: true, // New cells are dirty
         }
     }
 }
@@ -43,7 +43,7 @@ pub struct Grid {
     pub is_float: bool,
     pub is_visible: bool,
     // Dirty tracking for incremental rendering
-    pub dirty_all: bool,  // Full redraw needed (resize, clear)
+    pub dirty_all: bool, // Full redraw needed (resize, clear)
 }
 
 impl Grid {
@@ -60,11 +60,12 @@ impl Grid {
             col_offset: 0,
             is_float: false,
             is_visible: true,
-            dirty_all: true,  // New grids need full draw
+            dirty_all: true, // New grids need full draw
         }
     }
 
     /// Set cell with highlight ID
+    #[allow(dead_code)] // Part of public API
     pub fn set_with_hl(&mut self, row: usize, col: usize, ch: char, hl_id: Option<u32>) {
         if row < self.rows && col < self.cols {
             let cell = &mut self.cells[row * self.cols + col];
@@ -78,6 +79,7 @@ impl Grid {
     }
 
     /// Clear grid
+    #[allow(dead_code)] // Part of public API
     pub fn clear(&mut self) {
         for cell in &mut self.cells {
             cell.ch = ' ';
@@ -96,7 +98,7 @@ impl Grid {
         let mut new_cells = vec![Cell::new(); new_rows * new_cols];
         let copy_rows = self.rows.min(new_rows);
         let copy_cols = self.cols.min(new_cols);
-        
+
         for row in 0..copy_rows {
             for col in 0..copy_cols {
                 new_cells[row * new_cols + col] = self.cells[row * self.cols + col].clone();
@@ -108,10 +110,11 @@ impl Grid {
         self.cells = new_cells;
         self.cursor_row = self.cursor_row.min(new_rows.saturating_sub(1));
         self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
-        self.dirty_all = true;  // Resize requires full redraw
+        self.dirty_all = true; // Resize requires full redraw
     }
 
     /// Clear all dirty flags after rendering
+    #[allow(dead_code)] // Part of public API, may be used by future renderers
     pub fn mark_clean(&mut self) {
         self.dirty_all = false;
         for cell in &mut self.cells {
@@ -120,7 +123,7 @@ impl Grid {
     }
 
     /// Check if any cell is dirty
-    #[allow(dead_code)]  // Part of public API, may be used by future renderers
+    #[allow(dead_code)] // Part of public API, may be used by future renderers
     pub fn has_dirty_cells(&self) -> bool {
         self.dirty_all || self.cells.iter().any(|c| c.dirty)
     }
@@ -129,15 +132,20 @@ impl Grid {
     /// rows > 0: scroll up (content moves up, new lines at bottom)
     /// rows < 0: scroll down (content moves down, new lines at top)
     pub fn scroll_region(&mut self, top: usize, bot: usize, left: usize, right: usize, rows: i64) {
-        if rows == 0 { return; }
-        
+        if rows == 0 {
+            return;
+        }
+
         let bot = bot.min(self.rows);
         let right = right.min(self.cols);
-        
-        if top >= bot || left >= right { return; }
-        
+
+        if top >= bot || left >= right {
+            return;
+        }
+
         if rows > 0 {
-            // Scroll up: copy from row+rows to row
+            // Scroll up (Neovim spec): content moves UP
+            // Copy from row+scroll to row
             let scroll = rows as usize;
             for row in top..bot {
                 let src_row = row + scroll;
@@ -155,7 +163,8 @@ impl Grid {
                 }
             }
         } else {
-            // Scroll down: copy from row-scroll to row (iterate in reverse)
+            // Scroll down (Neovim spec): content moves DOWN
+            // Copy from row-scroll to row (iterate in reverse)
             let scroll = (-rows) as usize;
             for row in (top..bot).rev() {
                 for col in left..right {
@@ -179,18 +188,21 @@ impl Grid {
 /// Manages multiple grids with z-ordering
 pub struct GridManager {
     grids: HashMap<u32, Grid>,
-    order: Vec<u32>,  // Z-order: first = bottom, last = top
+    order: Vec<u32>, // Z-order: first = bottom, last = top
     active_grid: u32,
     /// Current Neovim mode (e.g., "normal", "insert", "cmdline")
     current_mode: String,
 }
 
+#[allow(dead_code)]
 impl GridManager {
     pub fn new() -> Self {
         // Create default grid 1 (main buffer)
         let mut grids = HashMap::new();
-        grids.insert(1, Grid::new(1, 24, 80));
-        
+        let mut main_grid = Grid::new(1, 24, 80);
+        main_grid.is_visible = true;
+        grids.insert(1, main_grid);
+
         Self {
             grids,
             order: vec![1],
@@ -205,10 +217,13 @@ impl GridManager {
             e.insert(Grid::new(grid_id, rows, cols));
             self.order.push(grid_id);
         }
-        self.grids.get_mut(&grid_id).unwrap()
+        self.grids
+            .get_mut(&grid_id)
+            .expect("grid just inserted but not found")
     }
 
     /// Get grid immutably
+    #[allow(dead_code)] // Part of public API
     pub fn get(&self, grid_id: u32) -> Option<&Grid> {
         self.grids.get(&grid_id)
     }
@@ -245,7 +260,7 @@ impl GridManager {
             grid.col_offset = col;
             grid.is_float = true;
             grid.is_visible = true;
-            
+
             // Move to top of z-order
             self.order.retain(|&id| id != grid_id);
             self.order.push(grid_id);
@@ -259,7 +274,7 @@ impl GridManager {
             if !self.order.contains(&grid_id) {
                 // Defer adding to order until we know dimensions
             }
-            Grid::new(grid_id, 24, 80)  // Default size, will be resized later
+            Grid::new(grid_id, 24, 80) // Default size, will be resized later
         });
         if !self.order.contains(&grid_id) {
             self.order.push(grid_id);
@@ -299,12 +314,14 @@ impl GridManager {
 
     /// Get grids in z-order (bottom to top)
     pub fn grids_in_order(&self) -> impl Iterator<Item = &Grid> {
-        self.order.iter()
+        self.order
+            .iter()
             .filter_map(|id| self.grids.get(id))
             .filter(|g| g.is_visible)
     }
 
     /// Get all grids mutably (for clearing dirty flags)
+    #[allow(dead_code)] // Part of public API
     pub fn grids_mut(&mut self) -> impl Iterator<Item = &mut Grid> {
         self.grids.values_mut()
     }
@@ -320,14 +337,15 @@ impl GridManager {
     }
 
     /// Get current Neovim mode
-    #[allow(dead_code)]  // Part of public API, may be used by future UI features
+    #[allow(dead_code)] // Part of public API, may be used by future UI features
     pub fn get_mode(&self) -> &str {
         &self.current_mode
     }
 
     /// Check if currently in cmdline mode
+    #[allow(dead_code)] // Part of public API
     pub fn is_cmdline_mode(&self) -> bool {
-        self.current_mode == "cmdline" 
+        self.current_mode == "cmdline"
             || self.current_mode == "cmdline_normal"
             || self.current_mode.starts_with("c")
     }
@@ -350,15 +368,19 @@ impl GridManager {
         // Check grids in reverse z-order (top to bottom) so floating windows take priority
         for &grid_id in self.order.iter().rev() {
             if let Some(grid) = self.grids.get(&grid_id) {
-                if !grid.is_visible { continue; }
-                
+                if !grid.is_visible {
+                    continue;
+                }
+
                 let grid_top = grid.row_offset;
                 let grid_left = grid.col_offset;
                 let grid_bottom = grid_top + (grid.rows as i32);
                 let grid_right = grid_left + (grid.cols as i32);
-                
-                if screen_row >= grid_top && screen_row < grid_bottom 
-                    && screen_col >= grid_left && screen_col < grid_right 
+
+                if screen_row >= grid_top
+                    && screen_row < grid_bottom
+                    && screen_col >= grid_left
+                    && screen_col < grid_right
                 {
                     let local_row = screen_row - grid_top;
                     let local_col = screen_col - grid_left;
@@ -371,7 +393,15 @@ impl GridManager {
     }
 
     /// Scroll a region within a grid
-    pub fn scroll_region(&mut self, grid_id: u32, top: usize, bot: usize, left: usize, right: usize, rows: i64) {
+    pub fn scroll_region(
+        &mut self,
+        grid_id: u32,
+        top: usize,
+        bot: usize,
+        left: usize,
+        right: usize,
+        rows: i64,
+    ) {
         if let Some(grid) = self.grids.get_mut(&grid_id) {
             grid.scroll_region(top, bot, left, right, rows);
         }

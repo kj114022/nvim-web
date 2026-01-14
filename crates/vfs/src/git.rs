@@ -36,7 +36,7 @@ impl GitFsBackend {
         // Path format: "commit/path/to/file"
         // e.g., "HEAD/src/main.rs" or "abc123/lib.rs"
         let parts: Vec<&str> = path.splitn(2, '/').collect();
-        
+
         if parts.len() < 2 {
             bail!("Invalid git path format. Expected: ref/path (e.g., HEAD/src/main.rs)");
         }
@@ -47,7 +47,12 @@ impl GitFsBackend {
     /// Run git show to get file contents at a specific ref
     fn git_show(&self, git_ref: &str, file_path: &str) -> Result<Vec<u8>> {
         let output = Command::new("git")
-            .args(["-C", &self.repo_path, "show", &format!("{git_ref}:{file_path}")])
+            .args([
+                "-C",
+                &self.repo_path,
+                "show",
+                &format!("{git_ref}:{file_path}"),
+            ])
             .output()
             .context("Failed to run git show")?;
 
@@ -79,7 +84,7 @@ impl GitFsBackend {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let names: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
-        
+
         Ok(names)
     }
 
@@ -87,9 +92,11 @@ impl GitFsBackend {
     fn git_cat_file_type(&self, git_ref: &str, file_path: &str) -> Result<(bool, bool)> {
         let output = Command::new("git")
             .args([
-                "-C", &self.repo_path,
-                "cat-file", "-t",
-                &format!("{git_ref}:{file_path}")
+                "-C",
+                &self.repo_path,
+                "cat-file",
+                "-t",
+                &format!("{git_ref}:{file_path}"),
             ])
             .output()
             .context("Failed to run git cat-file")?;
@@ -99,7 +106,7 @@ impl GitFsBackend {
         }
 
         let obj_type = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
+
         Ok((obj_type == "blob", obj_type == "tree"))
     }
 }
@@ -129,9 +136,11 @@ impl VfsBackend for GitFsBackend {
             // Get size via git cat-file -s
             Command::new("git")
                 .args([
-                    "-C", &self.repo_path,
-                    "cat-file", "-s",
-                    &format!("{git_ref}:{file_path}")
+                    "-C",
+                    &self.repo_path,
+                    "cat-file",
+                    "-s",
+                    &format!("{git_ref}:{file_path}"),
                 ])
                 .output()
                 .ok()

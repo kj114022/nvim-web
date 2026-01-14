@@ -9,14 +9,20 @@ use axum::{
     Router,
 };
 use nvim_web_host::api;
+use nvim_web_host::auth;
 use nvim_web_host::config::Config;
 use nvim_web_host::embedded;
 use nvim_web_host::native;
 use nvim_web_host::session::AsyncSessionManager;
-use nvim_web_host::vfs::{LocalFs, VfsManager};
+use nvim_web_host::transport::{serve_webtransport, WebTransportConfig};
+use nvim_web_host::vfs::{BrowserFsBackend, FsRequestRegistry, LocalFs, VfsManager};
 use nvim_web_host::ws;
+use std::fs::File;
+use std::io::BufReader;
 use tokio::signal;
 use tokio::sync::RwLock;
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::TlsAcceptor;
 use tower_http::cors::{Any, CorsLayer};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -54,16 +60,10 @@ fn print_connection_info(http_port: u16, ws_port: u16, bind: &str, embedded: boo
     if embedded {
         eprintln!("  \x1b[1;32m[vibin]\x1b[0m  Single binary mode - all assets embedded");
     }
-    eprintln!(
-        "  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{http_port}\x1b[0m"
-    );
-    eprintln!(
-        "  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{ws_port}\x1b[0m"
-    );
+    eprintln!("  \x1b[1;32m[http]\x1b[0m   Server chillin' at port \x1b[1;96m{http_port}\x1b[0m");
+    eprintln!("  \x1b[1;32m[ws]\x1b[0m     WebSocket vibin' at port \x1b[1;96m{ws_port}\x1b[0m");
     eprintln!();
-    eprintln!(
-        "  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{bind}:{http_port}\x1b[0m"
-    );
+    eprintln!("  \x1b[1;37m>\x1b[0m Open: \x1b[4;96mhttp://{bind}:{http_port}\x1b[0m");
     eprintln!();
     eprintln!("  \x1b[2mPress Ctrl+C to bounce\x1b[0m");
     eprintln!();
@@ -150,15 +150,21 @@ async fn serve_config_js(State(state): State<api::AppState>) -> Response<Body> {
         .unwrap()
 }
 
-/// Serve index.html at root
+/// Serve index.html at root with CSP
 async fn serve_index() -> Response<Body> {
+    let mut builder = Response::builder();
+    builder = builder
+        .header(header::CONTENT_SECURITY_POLICY, "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; connect-src 'self' ws: wss:; object-src 'self';")
+        .header("Cross-Origin-Opener-Policy", "same-origin")
+        .header("Cross-Origin-Embedder-Policy", "require-corp");
+
     match embedded::get_asset("index.html") {
-        Some((data, mime)) => Response::builder()
+        Some((data, mime)) => builder
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime)
             .body(Body::from(data))
             .unwrap(),
-        None => Response::builder()
+        None => builder
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("index.html not found"))
             .unwrap(),
@@ -170,7 +176,7 @@ fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use nvim_web_host::project::{ProjectConfig, TokenOptions, TokenMode};
+    use nvim_web_host::project::{ProjectConfig, TokenMode, TokenOptions};
 
     // Parse arguments
     let mut path_arg = ".".to_string();
@@ -266,11 +272,12 @@ fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     let name = config.display_name(&resolved_path);
 
     eprintln!();
+    eprintln!("  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{name}\x1b[0m");
     eprintln!(
-        "  \x1b[1;96m[open]\x1b[0m   Project: \x1b[1m{name}\x1b[0m"
+        "  \x1b[1;96m[open]\x1b[0m   Path: {}",
+        resolved_path.display()
     );
-    eprintln!("  \x1b[1;96m[open]\x1b[0m   Path: {}", resolved_path.display());
-    
+
     if let Some(ref file) = final_target_file {
         let line_str = final_target_line.map_or(String::new(), |l| format!(":{l}"));
         eprintln!("  \x1b[1;96m[open]\x1b[0m   File: {file}{line_str}");
@@ -280,7 +287,11 @@ fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     let options = TokenOptions {
         target_file: final_target_file,
         target_line: final_target_line,
-        mode: if share_mode { TokenMode::Share } else { TokenMode::SingleUse },
+        mode: if share_mode {
+            TokenMode::Share
+        } else {
+            TokenMode::SingleUse
+        },
         duration: share_duration,
         max_claims: if share_mode { Some(100) } else { None },
     };
@@ -291,7 +302,7 @@ fn handle_open_command(args: &[String]) -> anyhow::Result<()> {
     // Build URL
     let url = format!("http://localhost:8080/?open={token}");
     eprintln!("  \x1b[1;96m[open]\x1b[0m   URL: {url}");
-    
+
     if share_mode {
         eprintln!("  \x1b[1;35m[share]\x1b[0m  Shareable link (up to 100 uses)");
         if let Some(dur) = share_duration {
@@ -340,7 +351,9 @@ fn is_github_url(s: &str) -> bool {
 }
 
 /// Clone a GitHub repository and return (path, optional_file, optional_line)
-fn clone_github_repo(url: &str) -> anyhow::Result<(std::path::PathBuf, Option<String>, Option<u32>)> {
+fn clone_github_repo(
+    url: &str,
+) -> anyhow::Result<(std::path::PathBuf, Option<String>, Option<u32>)> {
     // Normalize URL: remove protocol prefix
     let normalized = url
         .trim_start_matches("https://")
@@ -358,33 +371,34 @@ fn clone_github_repo(url: &str) -> anyhow::Result<(std::path::PathBuf, Option<St
     let clone_url = format!("https://github.com/{owner}/{repo}.git");
 
     // Parse optional path and line from URL
-    let (target_file, target_line) = if parts.len() > 4 && (parts[2] == "blob" || parts[2] == "tree") {
-        // Format: owner/repo/blob/branch/path/to/file
-        let branch = parts[3];
-        let file_path = parts[4..].join("/");
-        
-        // Check for line number fragment (e.g., #L42 or #L42-L50)
-        let (clean_path, line) = if let Some((path, fragment)) = file_path.rsplit_once('#') {
-            let line_num = fragment
-                .trim_start_matches('L')
-                .split('-')
-                .next()
-                .and_then(|s| s.parse().ok());
-            (path.to_string(), line_num)
+    let (target_file, target_line) =
+        if parts.len() > 4 && (parts[2] == "blob" || parts[2] == "tree") {
+            // Format: owner/repo/blob/branch/path/to/file
+            let branch = parts[3];
+            let file_path = parts[4..].join("/");
+
+            // Check for line number fragment (e.g., #L42 or #L42-L50)
+            let (clean_path, line) = if let Some((path, fragment)) = file_path.rsplit_once('#') {
+                let line_num = fragment
+                    .trim_start_matches('L')
+                    .split('-')
+                    .next()
+                    .and_then(|s| s.parse().ok());
+                (path.to_string(), line_num)
+            } else {
+                (file_path, None)
+            };
+
+            eprintln!("  \x1b[1;35m[github]\x1b[0m Repo: {owner}/{repo} (branch: {branch})");
+            if !clean_path.is_empty() {
+                eprintln!("  \x1b[1;35m[github]\x1b[0m File: {clean_path}");
+            }
+
+            (Some(clean_path).filter(|s| !s.is_empty()), line)
         } else {
-            (file_path, None)
+            eprintln!("  \x1b[1;35m[github]\x1b[0m Repo: {owner}/{repo}");
+            (None, None)
         };
-        
-        eprintln!("  \x1b[1;35m[github]\x1b[0m Repo: {owner}/{repo} (branch: {branch})");
-        if !clean_path.is_empty() {
-            eprintln!("  \x1b[1;35m[github]\x1b[0m File: {clean_path}");
-        }
-        
-        (Some(clean_path).filter(|s| !s.is_empty()), line)
-    } else {
-        eprintln!("  \x1b[1;35m[github]\x1b[0m Repo: {owner}/{repo}");
-        (None, None)
-    };
 
     // Clone to temp directory
     let temp_dir = std::env::temp_dir().join("nvim-web-github");
@@ -402,10 +416,16 @@ fn clone_github_repo(url: &str) -> anyhow::Result<(std::path::PathBuf, Option<St
         if repo_dir.exists() {
             let _ = std::fs::remove_dir_all(&repo_dir);
         }
-        
+
         eprintln!("  \x1b[1;35m[github]\x1b[0m Cloning {clone_url}...");
         let output = std::process::Command::new("git")
-            .args(["clone", "--depth", "1", &clone_url, repo_dir.to_str().unwrap()])
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                &clone_url,
+                repo_dir.to_str().unwrap(),
+            ])
             .output()?;
 
         if !output.status.success() {
@@ -424,10 +444,10 @@ fn parse_duration(s: &str) -> Option<std::time::Duration> {
     if s.is_empty() {
         return None;
     }
-    
+
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: u64 = num_str.parse().ok()?;
-    
+
     match unit {
         "s" => Some(Duration::from_secs(num)),
         "m" => Some(Duration::from_secs(num * 60)),
@@ -437,11 +457,26 @@ fn parse_duration(s: &str) -> Option<std::time::Duration> {
     }
 }
 
+/// Load TLS configuration from certificates and key
+fn load_tls_config(cert_path: &str, key_path: &str) -> anyhow::Result<Arc<ServerConfig>> {
+    let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(cert_path)?))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(key_path)?))?
+        .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+
+    Ok(Arc::new(config))
+}
+
 /// Print QR code to terminal using qr2term
 fn print_qr_code(url: &str) {
     eprintln!("  \x1b[1;37m[QR Code]\x1b[0m");
     eprintln!();
-    
+
     // Generate real QR code using qr2term
     match qr2term::generate_qr_string(url) {
         Ok(qr_string) => {
@@ -457,7 +492,7 @@ fn print_qr_code(url: &str) {
             eprintln!("    URL: {url}");
         }
     }
-    
+
     eprintln!();
     let short_url = if url.len() > 60 {
         format!("{}...", &url[..57])
@@ -544,11 +579,65 @@ async fn main() -> anyhow::Result<()> {
 
     // === LOAD CONFIGURATION ===
     Config::create_default_if_missing();
-    let config = Config::load();
+    let mut config = Config::load();
     eprintln!(
         "  \x1b[1;32m[config]\x1b[0m Loaded from {}",
         Config::default_config_path().display()
     );
+
+    // Override config with CLI arguments
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--remote" => {
+                if i + 1 < args.len() {
+                    config.remote.enabled = true;
+                    config.remote.address = args[i + 1].clone();
+                    eprintln!(
+                        "  \x1b[1;36m[remote]\x1b[0m Target: {}",
+                        config.remote.address
+                    );
+                    i += 1;
+                } else {
+                    eprintln!("  \x1b[1;33m[warn]\x1b[0m   --remote requires an address argument");
+                }
+            }
+            "--auth-token" => {
+                if i + 1 < args.len() {
+                    config.remote.auth_token = Some(args[i + 1].clone());
+                    eprintln!("  \x1b[1;36m[auth]\x1b[0m   Token provided via CLI");
+                    i += 1;
+                } else {
+                    eprintln!("  \x1b[1;33m[warn]\x1b[0m   --auth-token requires a token argument");
+                }
+            }
+            "--auth-token-file" => {
+                if i + 1 < args.len() {
+                    config.remote.auth_token_file = Some(args[i + 1].clone());
+                    eprintln!("  \x1b[1;36m[auth]\x1b[0m   Token file: {}", args[i + 1]);
+                    i += 1;
+                } else {
+                    eprintln!(
+                        "  \x1b[1;33m[warn]\x1b[0m   --auth-token-file requires a path argument"
+                    );
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Auto-generate auth token if remote is enabled but no token configured
+    if config.remote.enabled
+        && config.remote.auth_token.is_none()
+        && config.remote.auth_token_file.is_none()
+    {
+        let token = auth::generate_secure_token();
+        eprintln!("  \x1b[1;35m[auth]\x1b[0m   Auto-generated token: {token}");
+        eprintln!("           (Use --auth-token to specify a fixed token)");
+        config.remote.auth_token = Some(token);
+    }
 
     // === GRACEFUL START ===
     eprintln!("  \x1b[1;33m[init]\x1b[0m   Running startup checks...");
@@ -604,24 +693,97 @@ async fn main() -> anyhow::Result<()> {
     // Create VFS manager with local filesystem backend
     let vfs = VfsManager::new();
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    vfs.register_backend("local", Box::new(LocalFs::new(&home_dir))).await;
+    vfs.register_backend("local", Box::new(LocalFs::new(&home_dir)))
+        .await;
+
+    // Setup BrowserFS backend (wired to WS)
+    let fs_registry = Arc::new(FsRequestRegistry::new());
+    let (fs_req_tx, _) = tokio::sync::broadcast::channel(1024);
+    vfs.register_backend(
+        "browser",
+        Box::new(BrowserFsBackend::new(
+            "default",
+            fs_req_tx.clone(),
+            fs_registry.clone(),
+        )),
+    )
+    .await;
+
+    // Setup GitHub backend (for vfs://github/owner/repo/path)
+    vfs.register_backend(
+        "github",
+        Box::new(nvim_web_vfs::GitHubFsBackend::from_env().unwrap_or_default()),
+    )
+    .await;
+
     let vfs_manager = Arc::new(RwLock::new(vfs));
-    eprintln!(
-        "  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {home_dir})"
-    );
+    eprintln!("  \x1b[1;32m[vfs]\x1b[0m    Backend: local (root: {home_dir}) + browser + github");
 
     // Create async session manager with VFS access
-    let session_manager = Arc::new(RwLock::new(AsyncSessionManager::new(vfs_manager.clone())));
+    let mut mgr = AsyncSessionManager::new(vfs_manager.clone());
+
+    // Configure remote backend if enabled
+    if config.remote.enabled {
+        mgr.set_remote_address(config.remote.address.clone());
+
+        // Resolve auth token (CLI > Inline > File)
+        match auth::resolve_token(
+            config.remote.auth_token.as_deref(),
+            config.remote.auth_token_file.as_deref(),
+        ) {
+            Ok(token) => mgr.set_auth_token(token),
+            Err(e) => {
+                eprintln!("  \x1b[1;31m[error]\x1b[0m  Failed to resolve auth token: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let session_manager = Arc::new(RwLock::new(mgr));
     let session_manager_shutdown = session_manager.clone();
 
     print_connection_info(http_port, ws_port, &config.server.bind, true);
+
+    // === START EMBEDDED HTTP SERVER (axum) ===
+    let tls_config =
+        if let (Some(cert), Some(key)) = (&config.server.ssl_cert, &config.server.ssl_key) {
+            eprintln!("  \x1b[1;36m[tls]\x1b[0m    Enabled (Cert: {})", cert);
+            let config = match load_tls_config(cert, key) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("  \x1b[1;31m[error]\x1b[0m  Failed to load TLS config: {e}");
+                    std::process::exit(1);
+                }
+            };
+            Some(config)
+        } else {
+            None
+        };
+
+    // === WEBTRANSPORT SERVER (requires TLS) ===
+    let webtransport_config = if let (Some(cert), Some(key), Some(wt_port)) = (
+        &config.server.ssl_cert,
+        &config.server.ssl_key,
+        config.server.webtransport_port,
+    ) {
+        eprintln!("  \x1b[1;36m[wt]\x1b[0m     WebTransport on port \x1b[1;96m{wt_port}\x1b[0m (QUIC/HTTP3)");
+        Some(WebTransportConfig {
+            port: wt_port,
+            cert_path: cert.clone(),
+            key_path: key.clone(),
+        })
+    } else if config.server.webtransport_port.is_some() {
+        eprintln!("  \x1b[1;33m[warn]\x1b[0m   WebTransport requires TLS (ssl_cert/ssl_key)");
+        None
+    } else {
+        None
+    };
 
     // === START EMBEDDED HTTP SERVER (axum) ===
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-
     let app_state = api::AppState {
         session_manager: session_manager.clone(),
         ws_port,
@@ -638,11 +800,70 @@ async fn main() -> anyhow::Result<()> {
     let http_addr = format!("{}:{}", config.server.bind, http_port);
     let http_listener = tokio::net::TcpListener::bind(&http_addr).await?;
 
-    let http_server = axum::serve(http_listener, app);
+    // HTTP Server Future
+    let http_tls_config = tls_config.clone();
+    let http_server = async move {
+        if let Some(tls_config) = http_tls_config {
+            // HTTPS Mode (Manual Loop)
+            let tls_acceptor = TlsAcceptor::from(tls_config);
+            loop {
+                // Accept TCP connection
+                let (stream, _addr) = match http_listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        tracing::warn!("HTTP accept error: {}", e);
+                        continue;
+                    }
+                };
+
+                // Wrap in TLS and serve
+                let tls_acceptor = tls_acceptor.clone();
+                let app = app.clone();
+
+                tokio::spawn(async move {
+                    match tls_acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let io = hyper_util::rt::TokioIo::new(tls_stream);
+
+                            // Adapter service to convert hyper::Request<Incoming> to axum::Request<Body>
+                            let service = hyper::service::service_fn(
+                                move |req: hyper::Request<hyper::body::Incoming>| {
+                                    let app = app.clone();
+                                    async move {
+                                        use tower::ServiceExt; // for oneshot
+                                        let (parts, body) = req.into_parts();
+                                        let req = http::Request::from_parts(parts, Body::new(body));
+                                        app.oneshot(req).await
+                                    }
+                                },
+                            );
+
+                            if let Err(err) = hyper_util::server::conn::auto::Builder::new(
+                                hyper_util::rt::TokioExecutor::new(),
+                            )
+                            .serve_connection(io, service)
+                            .await
+                            {
+                                tracing::warn!("HTTPS connection error: {}", err);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("TLS handshake failed: {}", e);
+                        }
+                    }
+                });
+            }
+        } else {
+            // HTTP Mode (Standard Axum)
+            if let Err(e) = axum::serve(http_listener, app).await {
+                tracing::error!("HTTP server error: {}", e);
+            }
+        }
+    };
 
     // === GRACEFUL SHUTDOWN HANDLER ===
     let (native_shutdown_tx, native_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    
+
     let shutdown_signal = async {
         // Wait for Ctrl+C or SIGTERM
         let ctrl_c = async {
@@ -661,7 +882,7 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(not(unix))]
         let terminate = std::future::pending::<()>();
-        
+
         // Wait for Native Messaging channel to close (Browser quit)
         let native_exit = async {
             if is_native {
@@ -684,11 +905,12 @@ async fn main() -> anyhow::Result<()> {
         // Cleanup sessions
         let mut mgr = session_manager_shutdown.write().await;
         let session_count = mgr.session_count();
-        eprintln!(
-            "  \x1b[1;33m[cleanup]\x1b[0m Cleaning up {session_count} sessions..."
-        );
+        eprintln!("  \x1b[1;33m[cleanup]\x1b[0m Cleaning up {session_count} sessions...");
 
-        // Clean up all sessions
+        // Trigger graceful shutdown (auto-save) for all sessions
+        mgr.shutdown_all().await;
+
+        // Clean up all sessions (remove from map)
         let ids: Vec<String> = mgr.session_ids();
         for id in ids {
             mgr.remove_session(&id);
@@ -700,15 +922,27 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Run all servers concurrently with shutdown handler
+    // Clone session_manager for WebTransport
+    let wt_session_manager = session_manager.clone();
+
     tokio::select! {
-        result = ws::serve_multi_async(session_manager, ws_port, None, Some(vfs_manager)) => {
+        result = ws::serve_multi_async(session_manager, ws_port, Some(fs_registry), Some(vfs_manager), Some(fs_req_tx), tls_config) => {
             result?;
         }
-        result = http_server => {
-            if let Err(e) = result {
-                eprintln!("  \x1b[1;31m[error]\x1b[0m  HTTP server error: {e}");
-            }
+        _ = http_server => {
+             // HTTP server finished (should typically loop forever)
         }
+        // WebTransport server (if configured)
+        _ = async {
+            if let Some(wt_config) = webtransport_config {
+                if let Err(e) = serve_webtransport(wt_session_manager, wt_config, None, None).await {
+                    eprintln!("  \x1b[1;31m[error]\x1b[0m  WebTransport server error: {e}");
+                }
+            } else {
+                // No WebTransport configured, just wait forever
+                std::future::pending::<()>().await;
+            }
+        } => {}
         () = async {
             if is_native {
                 if let Err(e) = native::run(native_shutdown_tx) {

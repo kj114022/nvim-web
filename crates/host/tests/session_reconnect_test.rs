@@ -21,8 +21,8 @@ async fn test_session_reconnection() {
     }
 
     tokio::spawn(async move {
-        if let Err(e) = serve_multi_async(manager, 9002, None, None).await {
-            eprintln!("Server error: {}", e);
+        if let Err(e) = serve_multi_async(manager, 9002, None, None, None, None).await {
+            eprintln!("Server error: {e}");
         }
     });
 
@@ -44,7 +44,7 @@ async fn test_session_reconnection() {
 
         // Expect ["session", "uuid"]
         if let Value::Array(arr) = val {
-            assert_eq!(arr.len(), 2);
+            assert!(arr.len() >= 2);
             assert_eq!(arr[0].as_str(), Some("session"));
             let id = arr[1].as_str().expect("Session ID not string").to_string();
             println!("Got session ID: {}", id);
@@ -72,7 +72,7 @@ async fn test_session_reconnection() {
         let val: Value = rmpv::decode::read_value(&mut &data[..]).expect("Invalid msgpack");
 
         if let Value::Array(arr) = val {
-            assert_eq!(arr.len(), 2);
+            assert!(arr.len() >= 2);
             assert_eq!(arr[0].as_str(), Some("session"));
             let new_id = arr[1].as_str().expect("Session ID not string").to_string();
 

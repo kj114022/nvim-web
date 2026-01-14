@@ -1,0 +1,75 @@
+# Session Pod Template
+# This is used as a reference for dynamically creating session pods.
+# The actual pod creation is done by PodManager in Rust code.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nvim-web-session-TEMPLATE
+  namespace: nvim-web
+  labels:
+    app: nvim-web-session
+    # session-id: <set-dynamically>
+  annotations:
+    nvim-web/session-id: "TEMPLATE"
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 30
+  serviceAccountName: default
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containers:
+    - name: nvim-web
+      image: ghcr.io/nvim-web/session:latest
+      imagePullPolicy: Always
+      ports:
+        - name: ws
+          containerPort: 9001
+          protocol: TCP
+      env:
+        - name: SESSION_ID
+          value: "TEMPLATE"
+        - name: NVIM_WEB_MODE
+          value: "session"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      securityContext:
+        readOnlyRootFilesystem: false
+        allowPrivilegeEscalation: false
+      livenessProbe:
+        tcpSocket:
+          port: ws
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:
+        tcpSocket:
+          port: ws
+        initialDelaySeconds: 2
+        periodSeconds: 5
+  volumes:
+    - name: workspace
+      emptyDir:
+        sizeLimit: 1Gi
+---
+# Optional: PVC-backed session storage
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: nvim-web-session-TEMPLATE-pvc
+#   namespace: nvim-web
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   storageClassName: standard
+#   resources:
+#     requests:
+#       storage: 1Gi

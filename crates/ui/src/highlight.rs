@@ -1,13 +1,17 @@
+#![allow(dead_code)]
 use std::collections::HashMap;
 
 /// Highlight attributes from `hl_attr_define`
 #[derive(Clone, Default)]
 pub struct HighlightAttr {
-    pub fg: Option<u32>,  // RGB color
-    pub bg: Option<u32>,  // RGB color
+    pub fg: Option<u32>, // RGB color
+    pub bg: Option<u32>, // RGB color
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub undercurl: bool,
+    pub strikethrough: bool,
+    pub special: Option<u32>, // Color for decorations
 }
 
 /// Storage for highlight definitions

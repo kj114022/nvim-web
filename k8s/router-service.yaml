@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvim-web-router
+  namespace: nvim-web
+  labels:
+    app.kubernetes.io/name: nvim-web
+    app.kubernetes.io/component: router
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nvim-web
+    app.kubernetes.io/component: router
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: ws
+      port: 9001
+      targetPort: ws
+      protocol: TCP
+---
+# Headless service for session pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvim-web-sessions
+  namespace: nvim-web
+  labels:
+    app.kubernetes.io/name: nvim-web
+    app.kubernetes.io/component: session
+spec:
+  clusterIP: None
+  selector:
+    app: nvim-web-session
+  ports:
+    - name: ws
+      port: 9001
+      targetPort: 9001
+      protocol: TCP

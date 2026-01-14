@@ -77,9 +77,8 @@ impl ShareLink {
 
     /// Get remaining time until expiry
     pub fn time_remaining(&self) -> Option<Duration> {
-        self.expires_at.and_then(|exp| {
-            exp.duration_since(SystemTime::now()).ok()
-        })
+        self.expires_at
+            .and_then(|exp| exp.duration_since(SystemTime::now()).ok())
     }
 }
 
@@ -114,30 +113,36 @@ lazy_static::lazy_static! {
 fn generate_share_token() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    
+
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_micros();
-    
+
     // Create a short, URL-safe token
     let raw = format!("{timestamp:x}{count:x}");
     // Take last 12 characters for brevity
-    raw.chars().rev().take(12).collect::<String>().chars().rev().collect()
+    raw.chars()
+        .rev()
+        .take(12)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
 }
 
 /// Generate a snapshot ID
 fn generate_snapshot_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    
+
     let count = COUNTER.fetch_add(1, Ordering::SeqCst);
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    
+
     format!("snap_{timestamp:x}_{count}")
 }
 
@@ -145,7 +150,7 @@ fn generate_snapshot_id() -> String {
 pub fn create_share_link(session_id: &str, options: ShareOptions) -> ShareLink {
     let token = generate_share_token();
     let now = SystemTime::now();
-    
+
     let link = ShareLink {
         token: token.clone(),
         session_id: session_id.to_string(),
@@ -186,12 +191,14 @@ pub fn get_share_link(token: &str) -> Option<ShareLink> {
 /// List all share links for a session
 pub fn list_share_links(session_id: &str) -> Vec<ShareLink> {
     let links = SHARE_LINKS.read().ok();
-    links.map(|l| {
-        l.values()
-            .filter(|link| link.session_id == session_id && link.is_valid())
-            .cloned()
-            .collect()
-    }).unwrap_or_default()
+    links
+        .map(|l| {
+            l.values()
+                .filter(|link| link.session_id == session_id && link.is_valid())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Revoke a share link
@@ -213,7 +220,7 @@ pub fn create_snapshot(
     description: Option<String>,
 ) -> Snapshot {
     let id = generate_snapshot_id();
-    
+
     let snapshot = Snapshot {
         id: id.clone(),
         session_id: session_id.to_string(),
@@ -241,12 +248,14 @@ pub fn get_snapshot(id: &str) -> Option<Snapshot> {
 /// List snapshots for a session
 pub fn list_snapshots(session_id: &str) -> Vec<Snapshot> {
     let snapshots = SNAPSHOTS.read().ok();
-    snapshots.map(|s| {
-        s.values()
-            .filter(|snap| snap.session_id == session_id)
-            .cloned()
-            .collect()
-    }).unwrap_or_default()
+    snapshots
+        .map(|s| {
+            s.values()
+                .filter(|snap| snap.session_id == session_id)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Delete a snapshot
@@ -271,12 +280,15 @@ mod tests {
 
     #[test]
     fn test_share_link_creation() {
-        let link = create_share_link("test-session", ShareOptions {
-            ttl_secs: Some(3600),
-            max_uses: Some(5),
-            read_only: true,
-            label: Some("Team share".to_string()),
-        });
+        let link = create_share_link(
+            "test-session",
+            ShareOptions {
+                ttl_secs: Some(3600),
+                max_uses: Some(5),
+                read_only: true,
+                label: Some("Team share".to_string()),
+            },
+        );
 
         assert_eq!(link.session_id, "test-session");
         assert!(link.is_valid());
@@ -286,19 +298,22 @@ mod tests {
 
     #[test]
     fn test_share_link_use() {
-        let link = create_share_link("session-1", ShareOptions {
-            max_uses: Some(2),
-            ..Default::default()
-        });
+        let link = create_share_link(
+            "session-1",
+            ShareOptions {
+                max_uses: Some(2),
+                ..Default::default()
+            },
+        );
 
         // First use
         let result = use_share_link(&link.token);
         assert!(result.is_some());
-        
+
         // Second use
         let result = use_share_link(&link.token);
         assert!(result.is_some());
-        
+
         // Third use should fail (max_uses = 2)
         let result = use_share_link(&link.token);
         assert!(result.is_none());
