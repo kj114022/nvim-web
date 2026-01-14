@@ -1,0 +1,1017 @@
+/* nvim-web Terminal-Aesthetic Styles
+ * Kanagawa-inspired color palette with box-drawing aesthetics
+ */
+
+/* === Design Tokens === */
+:root {
+  /* Terminal Color Palette (Kanagawa) */
+  --bg-dark: #16161d;
+  --bg-medium: #1f1f28;
+  --bg-light: #2a2a37;
+  --bg-highlight: #363646;
+  
+  --fg-main: #dcd7ba;
+  --fg-dim: #727169;
+  --fg-comment: #54546d;
+  
+  --accent-blue: #7e9cd8;
+  --accent-green: #98bb6c;
+  --accent-red: #e46876;
+  --accent-yellow: #e6c384;
+  --accent-purple: #957fb8;
+  --accent-cyan: #7fb4ca;
+  --accent-orange: #ffa066;
+  
+  /* Mode Colors */
+  --mode-normal: #6272a4;
+  --mode-insert: #98bb6c;
+  --mode-visual: #957fb8;
+  --mode-replace: #e46876;
+  --mode-command: #e6c384;
+  
+  /* Terminal Typography */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --line-height: 1.4;
+  
+  /* Programming Ligatures */
+  --font-ligatures: "calt" 1, "liga" 1, "dlig" 0;
+  
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  
+  /* Borders */
+  --border-subtle: 1px solid var(--bg-light);
+  --border-accent: 1px solid var(--fg-comment);
+  --radius-sm: 2px;
+  --radius-md: 4px;
+}
+
+/* === Reset === */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-dark);
+  color: var(--fg-main);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* === Shell Layout (CSS Grid) === */
+#nvim-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "header header header"
+    "left   center right"
+    "bottom bottom bottom"
+    "status status status";
+  height: 100vh;
+  width: 100vw;
+}
+
+#nvim-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 var(--space-md);
+  background: var(--bg-medium);
+  border-bottom: var(--border-subtle);
+}
+
+#nvim-header.hidden { display: none; }
+
+#nvim-main {
+  grid-area: center;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-left {
+  grid-area: left;
+  width: 0;
+  overflow: hidden;
+  transition: width 0.15s ease;
+  background: var(--bg-medium);
+  border-right: var(--border-subtle);
+}
+
+.panel-left.expanded { width: 240px; }
+
+.panel-right {
+  grid-area: right;
+  width: 0;
+  overflow: hidden;
+  transition: width 0.15s ease;
+  background: var(--bg-medium);
+  border-left: var(--border-subtle);
+}
+
+.panel-right.expanded { width: 240px; }
+
+.panel-bottom {
+  grid-area: bottom;
+  height: 0;
+  overflow: hidden;
+  transition: height 0.15s ease;
+  background: var(--bg-medium);
+  border-top: var(--border-subtle);
+}
+
+.panel-bottom.expanded { height: 200px; }
+
+#panel-center {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* === Canvas === */
+#nvim-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#grid-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+/* === Status Bar === */
+#nvim-statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 var(--space-sm);
+  background: var(--bg-medium);
+  border-top: var(--border-subtle);
+  font-size: var(--font-size-sm);
+  user-select: none;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Mode Badge */
+.mode-badge {
+  padding: 1px 6px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: var(--radius-sm);
+}
+
+.mode-normal  { background: var(--mode-normal); color: var(--fg-main); }
+.mode-insert  { background: var(--mode-insert); color: var(--bg-dark); }
+.mode-visual  { background: var(--mode-visual); color: var(--bg-dark); }
+.mode-replace { background: var(--mode-replace); color: var(--fg-main); }
+.mode-command { background: var(--mode-command); color: var(--bg-dark); }
+
+/* Git Branch */
+.git-branch {
+  color: var(--accent-cyan);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.git-branch::before {
+  content: "⎇";
+  font-size: 10px;
+}
+
+/* Cursor Position */
+.cursor-pos {
+  color: var(--fg-dim);
+}
+
+/* File Info */
+.file-info {
+  color: var(--fg-dim);
+}
+
+/* Connection Status */
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s ease;
+}
+
+.connection-dot.connected    { background: var(--accent-green); }
+.connection-dot.connecting   { background: var(--accent-yellow); animation: pulse 1s infinite; }
+.connection-dot.disconnected { background: var(--accent-red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.3; }
+}
+
+/* === Start Screen === */
+.start-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-dark);
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-main);
+  font-family: var(--font-mono);
+}
+
+.start-screen.hidden {
+  display: none !important;
+}
+
+/* ASCII Art Banner */
+.ascii-banner {
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--accent-blue);
+  margin-bottom: var(--space-xl);
+  text-align: center;
+}
+
+/* Start Menu */
+.start-menu {
+  background: var(--bg-medium);
+  border: var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  width: 440px;
+  max-width: 90vw;
+}
+
+.start-menu-header {
+  color: var(--accent-purple);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: var(--border-subtle);
+}
+
+/* Keyboard Shortcuts */
+.start-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.start-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-light);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.start-shortcut:hover {
+  background: var(--bg-highlight);
+}
+
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: var(--bg-dark);
+  border: 1px solid var(--fg-comment);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--accent-yellow);
+}
+
+.shortcut-label {
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+}
+
+/* Recent Files */
+.recent-section {
+  margin-top: var(--space-md);
+}
+
+.recent-header {
+  color: var(--fg-dim);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: var(--space-sm);
+}
+
+.recent-list {
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.recent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm);
+}
+
+.recent-item:hover {
+  background: var(--bg-light);
+  color: var(--accent-yellow);
+}
+
+.recent-item .item-key {
+  color: var(--accent-cyan);
+  min-width: 16px;
+}
+
+.recent-empty {
+  padding: var(--space-md);
+  text-align: center;
+  color: var(--fg-comment);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+}
+
+/* === Toast Notifications === */
+#nvim-toast {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent-red);
+  color: var(--fg-main);
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+#nvim-toast.show {
+  opacity: 0.95;
+}
+
+/* === Hidden Elements === */
+#nvim-input {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+}
+
+/* === Offline Indicator === */
+#offline-indicator {
+  position: fixed;
+  top: var(--space-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent-red);
+  color: var(--fg-main);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  z-index: 9999;
+}
+
+/* === Connection Overlay === */
+#connection-indicator {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(228, 104, 118, 0.95);
+  color: var(--fg-main);
+  padding: var(--space-lg) var(--space-xl);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
+  z-index: 9999;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* === Image Overlay === */
+#nvim-images {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 90;
+}
+
+/* === Scrollbar Styling === */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-highlight);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-comment);
+}
+
+/* === Learning Mode Hints (Opt-in) === */
+.hints-panel {
+  position: fixed;
+  bottom: 32px;
+  right: var(--space-md);
+  width: 220px;
+  background: var(--bg-medium);
+  border: var(--border-accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  font-size: var(--font-size-sm);
+  z-index: 800;
+  display: none;
+}
+
+.hints-panel.visible {
+  display: block;
+}
+
+.hints-header {
+  color: var(--accent-purple);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-xs);
+  border-bottom: var(--border-subtle);
+}
+
+.hint-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-xs) 0;
+}
+
+.hint-key {
+  color: var(--accent-yellow);
+}
+
+.hint-desc {
+  color: var(--fg-dim);
+}
+
+/* === Header Bar === */
+#nvim-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.logo {
+  font-weight: 600;
+  color: var(--accent-blue);
+  font-size: var(--font-size-sm);
+}
+
+.header-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
+}
+
+.header-btn:hover {
+  background: var(--bg-light);
+  color: var(--fg-main);
+}
+
+.header-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+}
+
+.buffer-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.buffer-tab {
+  padding: var(--space-xs) var(--space-md);
+  background: var(--bg-light);
+  color: var(--fg-dim);
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.buffer-tab:hover {
+  background: var(--bg-highlight);
+  color: var(--fg-main);
+}
+
+.buffer-tab.active {
+  background: var(--bg-dark);
+  color: var(--accent-blue);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+#nvim-statusbar.hidden { display: none; }
+
+/* === Panel Content === */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-light);
+  border-bottom: var(--border-subtle);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-dim);
+}
+
+.panel-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  padding: 0 var(--space-xs);
+}
+
+.panel-close:hover {
+  color: var(--accent-red);
+}
+
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+}
+
+.tree-empty {
+  color: var(--fg-comment);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  padding: var(--space-lg);
+  font-style: italic;
+}
+
+/* === Settings Panel === */
+.settings-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  max-width: 90vw;
+  background: var(--bg-medium);
+  border: var(--border-accent);
+  border-radius: var(--radius-md);
+  z-index: 9000;
+  display: none;
+}
+
+.settings-panel.visible {
+  display: block;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md);
+  border-bottom: var(--border-subtle);
+  color: var(--accent-purple);
+}
+
+.settings-content {
+  padding: var(--space-md);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: var(--border-subtle);
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-row label {
+  color: var(--fg-main);
+  font-size: var(--font-size-sm);
+}
+
+.setting-row select,
+.setting-row input[type="checkbox"] {
+  background: var(--bg-light);
+  border: var(--border-subtle);
+  color: var(--fg-main);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.setting-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-green);
+}
+
+/* === Theme Variants === */
+/* Dracula */
+body[data-theme="dracula"] {
+  --bg-dark: #282a36;
+  --bg-medium: #21222c;
+  --bg-light: #343746;
+  --bg-highlight: #44475a;
+  --fg-main: #f8f8f2;
+  --fg-dim: #6272a4;
+  --fg-comment: #6272a4;
+  --accent-blue: #8be9fd;
+  --accent-green: #50fa7b;
+  --accent-red: #ff5555;
+  --accent-yellow: #f1fa8c;
+  --accent-purple: #bd93f9;
+  --accent-cyan: #8be9fd;
+  --accent-orange: #ffb86c;
+}
+
+/* Nord */
+body[data-theme="nord"] {
+  --bg-dark: #2e3440;
+  --bg-medium: #3b4252;
+  --bg-light: #434c5e;
+  --bg-highlight: #4c566a;
+  --fg-main: #eceff4;
+  --fg-dim: #d8dee9;
+  --fg-comment: #616e88;
+  --accent-blue: #81a1c1;
+  --accent-green: #a3be8c;
+  --accent-red: #bf616a;
+  --accent-yellow: #ebcb8b;
+  --accent-purple: #b48ead;
+  --accent-cyan: #88c0d0;
+  --accent-orange: #d08770;
+}
+
+/* === Terminal Panel (xterm.js integration ready) === */
+#terminal-container {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-dark);
+}
+
+/* xterm.js default styling overrides */
+#terminal-container .xterm {
+  height: 100%;
+}
+
+#terminal-container .xterm-viewport {
+  background: var(--bg-dark) !important;
+}
+
+/* === IME Composition Preview === */
+.ime-preview {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-light);
+  color: var(--fg-main);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  z-index: 10000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.ime-preview.visible {
+  opacity: 1;
+}
+
+/* === LLM Panel Styles === */
+.llm-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0 !important;
+}
+
+.llm-provider-row {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-bottom: var(--border-subtle);
+}
+
+.llm-provider-select {
+  flex: 1;
+  background: var(--bg-light);
+  color: var(--fg-main);
+  border: 1px solid var(--bg-highlight);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+}
+
+.llm-settings-btn {
+  background: var(--bg-light);
+  border: 1px solid var(--bg-highlight);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.llm-settings-btn:hover {
+  background: var(--bg-highlight);
+}
+
+.llm-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.llm-welcome {
+  color: var(--fg-dim);
+  text-align: center;
+  padding: var(--space-lg);
+}
+
+.llm-welcome p {
+  margin: var(--space-sm) 0;
+}
+
+.llm-hint {
+  font-size: var(--font-size-xs);
+  opacity: 0.7;
+}
+
+.llm-input-area {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-top: var(--border-subtle);
+}
+
+.llm-prompt {
+  flex: 1;
+  resize: none;
+  background: var(--bg-light);
+  color: var(--fg-main);
+  border: 1px solid var(--bg-highlight);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.llm-prompt:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.llm-send-btn {
+  background: var(--accent-blue);
+  color: var(--bg-dark);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-md);
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.llm-send-btn:hover {
+  background: var(--accent-cyan);
+}
+
+.llm-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Message bubbles */
+.llm-message {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+}
+
+.llm-message.user {
+  background: var(--bg-highlight);
+  margin-left: var(--space-lg);
+}
+
+.llm-message.assistant {
+  background: var(--bg-light);
+  border-left: 2px solid var(--accent-blue);
+}
+
+.llm-message.streaming::after {
+  content: "▌";
+  animation: blink 0.7s infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* === P2P Chat Panel === */
+.chat-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 320px;
+  max-height: 400px;
+  background: var(--bg-medium);
+  border: 1px solid var(--bg-highlight);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  z-index: 10000;
+  transition: transform 0.2s ease;
+}
+
+.chat-panel.collapsed {
+  transform: translateY(calc(100% - 40px));
+}
+
+.chat-header {
+  padding: 10px 14px;
+  background: var(--bg-light);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--fg-main);
+  font-weight: 500;
+}
+
+.chat-badge {
+  background: var(--accent-blue);
+  color: var(--bg-dark);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  min-height: 200px;
+  max-height: 300px;
+}
+
+.chat-msg {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-light);
+  color: var(--fg-main);
+  font-size: 13px;
+}
+
+.chat-msg .sender {
+  font-weight: 600;
+  color: var(--accent-blue);
+  margin-right: 6px;
+}
+
+.chat-msg .time {
+  color: var(--fg-comment);
+  font-size: 11px;
+  float: right;
+}
+
+.chat-msg.self {
+  background: var(--bg-highlight);
+}
+
+.chat-input-row {
+  display: flex;
+  padding: 10px;
+  border-top: 1px solid var(--bg-highlight);
+}
+
+#chat-input {
+  flex: 1;
+  background: var(--bg-light);
+  border: 1px solid var(--bg-highlight);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--fg-main);
+  outline: none;
+  font-family: var(--font-mono);
+}
+
+#chat-input:focus {
+  border-color: var(--accent-blue);
+}
+
+#chat-send {
+  margin-left: 8px;
+  background: var(--accent-blue);
+  color: var(--bg-dark);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+#chat-send:hover {
+  background: var(--accent-cyan);
+}
