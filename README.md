@@ -48,9 +48,9 @@ bazel build //...
 | Platform | Command |
 |----------|---------|
 | **macOS** | `brew install --build-from-source packaging/nvim-web.rb` |
-| **Ubuntu/Debian** | `sudo dpkg -i nvim-web_0.1.0_amd64.deb` |
+| **Ubuntu/Debian** | `sudo dpkg -i nvim-web_0.9.9_amd64.deb` |
 | **Ubuntu Snap** | `sudo snap install nvim-web` |
-| **Fedora/RHEL** | `sudo dnf install nvim-web-0.1.0-1.x86_64.rpm` |
+| **Fedora/RHEL** | `sudo dnf install nvim-web-0.9.9-1.x86_64.rpm` |
 | **Arch Linux** | `cd packaging/arch && makepkg -si` |
 | **NixOS** | `nix build github:kj114022/nvim-web#nvim-web` |
 | **Flatpak** | `flatpak install com.github.kj114022.nvim-web` |

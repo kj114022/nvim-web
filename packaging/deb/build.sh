@@ -2,7 +2,7 @@
 # Build Debian package for nvim-web
 set -e
 
-VERSION="0.1.0"
+VERSION="0.9.9"
 PACKAGE_NAME="nvim-web"
 ARCH="amd64"
 BUILD_DIR="build"

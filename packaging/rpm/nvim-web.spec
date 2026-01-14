@@ -1,5 +1,5 @@
 Name:           nvim-web
-Version:        0.1.0
+Version:        0.9.9
 Release:        1%{?dist}
 Summary:        Neovim in the Browser
 
@@ -51,7 +51,7 @@ install -m 644 LICENSE %{buildroot}%{_docdir}/%{name}/
 %config(noreplace) %{_sysconfdir}/nvim-web/config.example.toml
 
 %changelog
-* Tue Jan 14 2026 nvim-web contributors <nvim-web@example.com> - 0.1.0-1
+* Tue Jan 14 2026 nvim-web contributors <nvim-web@example.com> - 0.9.9-1
 - Initial package
 - WebSocket and WebTransport support
 - CRDT-based collaborative editing

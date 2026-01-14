@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "nvim-web-host"
-version = "0.1.0"
+version = "0.9.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "nvim-web-protocol"
-version = "0.1.0"
+version = "0.9.9"
 dependencies = [
  "rmp-serde",
  "rmpv",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "nvim-web-ui"
-version = "0.1.0"
+version = "0.9.9"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "nvim-web-vfs"
-version = "0.1.0"
+version = "0.9.9"
 dependencies = [
  "anyhow",
  "async-trait",
